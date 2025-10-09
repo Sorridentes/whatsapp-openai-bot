@@ -5,11 +5,14 @@ from urllib.parse import quote as format_url
 
 class EvolutionIntegration:
     def __init__(self):
-        self.apikey: str = Config.APIKEY
-        self.base_url: str = Config.SERVER_URL
-        self.nameInstance: str = format_url(Config.NAME_INSTANCE)
+        self.apikey: str = Config.EVOLUTION_APIKEY
+        self.base_url: str = Config.EVOLUTION_SERVER_URL
+        self.nameInstance: str = format_url(Config.EVOLUTION_NAME_INSTANCE)
 
     def send_message(self, to: str, message: str) -> dict:
+        """
+        Envia uma mensagem via EvolutionAPI.
+        """
         url: str = f"{self.base_url}/message/sendText/{self.nameInstance}"
         payload: dict[str, str] = {
             "number": f"{to}",
@@ -30,17 +33,6 @@ class EvolutionIntegration:
             return {"error": str(e)}
         
     def webhook_response(self, data: dict) -> dict:
-        try:
-            message_type: str = data.get("type")
-            if message_type != "text":
-                return {"error": "Unsupported message type"}
-
-            from_number: str = data.get("from", "")
-            message_text: str = data.get("body", "")
-
-            return {
-                "from": from_number,
-                "message": message_text
-            }
-        except Exception as e:
-            return {"error": str(e)}
+        """
+        Processa a resposta do webhook recebido da EvolutionAPI.
+        """

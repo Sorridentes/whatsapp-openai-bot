@@ -9,9 +9,9 @@ class Config:
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL")
     
     # Configuração da EvolutionAPI
-    APIKEY: str = os.getenv("APIKEY")
-    SERVER_URL: str = os.getenv("SERVER_URL")
-    NAME_INSTANCE: str = os.getenv("NAME_INSTANCE")
+    EVOLUTION_APIKEY: str = os.getenv("EVOLUTION_APIKEY")
+    EVOLUTION_SERVER_URL: str = os.getenv("EVOLUTION_SERVER_URL")
+    EVOLUTION_NAME_INSTANCE: str = os.getenv("EVOLUTION_NAME_INSTANCE")
     
     # Números autorizados a usar o bot
     AUTHORIZED_NUMBERS: list = os.getenv("AUTHORIZED_NUMBERS", "").split(",") if os.getenv("AUTHORIZED_NUMBERS") else []
