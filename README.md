@@ -1,1 +1,1 @@
-# Bot do Whatsapp gerenciado pela OpenAI
+# Bot inteligente para WhatsApp com OpenAI e Evolution API
