@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from urllib.parse import quote as format_url
 
 load_dotenv()
 
@@ -11,7 +12,7 @@ class Config:
     # Configuração da EvolutionAPI
     EVOLUTION_APIKEY: str = os.getenv("EVOLUTION_APIKEY")
     EVOLUTION_SERVER_URL: str = os.getenv("EVOLUTION_SERVER_URL")
-    EVOLUTION_NAME_INSTANCE: str = os.getenv("EVOLUTION_NAME_INSTANCE")
+    EVOLUTION_NAME_INSTANCE: str =  format_url(os.getenv("EVOLUTION_NAME_INSTANCE"))
     
     # Números autorizados a usar o bot
     AUTHORIZED_NUMBERS: list = os.getenv("AUTHORIZED_NUMBERS", "").split(",") if os.getenv("AUTHORIZED_NUMBERS") else []

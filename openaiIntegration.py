@@ -1,6 +1,6 @@
 from openai import OpenAI
 from config import Config
-from whatsAppMessage import WhatsAppMessage
+from whatsappMessage import WhatsAppMessage
 from flask import HTTPException
 
 class OpenaiIntegration:

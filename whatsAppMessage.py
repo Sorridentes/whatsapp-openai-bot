@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 
 class WhatsAppMessage(BaseModel):
-    from_number: str
+    to_number: str
     message_text: str
     history: list[dict] = []
     is_authorized: bool
