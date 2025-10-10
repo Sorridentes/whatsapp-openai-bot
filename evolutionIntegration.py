@@ -36,7 +36,16 @@ class EvolutionIntegration:
                     }
                 ]
             })
-            return response.json()
+            whatsappMessage.add_to_history({
+                "role": "user", 
+                "content": [
+                    {
+                        "type": "text", 
+                        "text": whatsappMessage.message_text
+                    }
+                ]
+            })
+            return True
         except (requests.HTTPError, requests.RequestException) as e:
             return False
         
