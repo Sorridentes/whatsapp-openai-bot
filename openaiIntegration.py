@@ -1,34 +1,47 @@
 from openai import OpenAI
 from config import Config
-from whatsappMessage import WhatsAppMessage
-from flask import HTTPException
+from whatsappMessage import WhatsappMessage
+from typing import Any
+import logging
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 class OpenaiIntegration:
     def __init__(self):
-        self.client: OpenAI = OpenAI()
+        self.client: OpenAI = OpenAI(api_key=Config.OPENAI_API_KEY)
     
-    def create_response(self, whatsappMessage: WhatsAppMessage) -> dict:
+    def create_response(self, WhatsappMessage: WhatsappMessage) -> Any:
         """
         Cria uma resposta utilizando o modelo da OpenAI.
         """
         try:
-            response = self.client.responses.create(
+            response: Any = self.client.responses.create(
                 prompt={
-                    "id": "pmpt_68e7f29b766481959bca3eb9f22311320ae1cd8e223c5382",
-                    "version": "2"
+                    "id": Config.OPENAI_PROMPT_ID,
+                    "version": Config.PROMPT_ID_VERSION
                 },
-                input=whatsappMessage.history,
+                input=WhatsappMessage.history,
                 text={
                     "format": {
                     "type": "text"
                     }
                 },
                 reasoning={},
-                max_output_tokens=2048,
-                store=True,
-                include=["web_search_call.action.sources"]
+                max_output_tokens=512,
+                store=True
             )
-            whatsappMessage.add_to_history(response.output[0])
+            logger.info(f"Resposta gerada com sucesso para {WhatsappMessage.to_number}")
+            WhatsappMessage.add_to_history({
+                "id": response.output[0].id,
+                "role": "assistant", 
+                "content": [
+                    {
+                        "type": "output_text", 
+                        "text": response.output[0].content[0].text
+                    }
+                ]
+            })
             return response
         except Exception as e:
-            raise HTTPException(status_code=500, detail="Erro ao gerar resposta da IA")
+            logger.error(f"Erro ao gerar resposta para {WhatsappMessage.to_number}: {e}")
+            raise e

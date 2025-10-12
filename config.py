@@ -7,7 +7,8 @@ class Config:
     # Configuração da OpenAI
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini-2025-04-14")
-
+    OPENAI_PROMPT_ID: str = os.getenv("OPENAI_PROMPT_ID", "")
+    PROMPT_ID_VERSION: str = os.getenv("PROMPT_ID_VERSION", "1")
     
     # Configuração da EvolutionAPI
     EVOLUTION_APIKEY: str = os.getenv("EVOLUTION_APIKEY","")
