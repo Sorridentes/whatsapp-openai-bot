@@ -5,11 +5,15 @@ load_dotenv()
 
 class Config:
     # Configuração da OpenAI
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini-2025-04-14")
+    OPENAI_PROMPT_ID: str = os.getenv("OPENAI_PROMPT_ID", "")
+    PROMPT_ID_VERSION: str = os.getenv("PROMPT_ID_VERSION", "1")
     
     # Configuração da EvolutionAPI
-    APIKEY: str = os.getenv("APIKEY")
-
+    EVOLUTION_APIKEY: str = os.getenv("EVOLUTION_APIKEY","")
+    EVOLUTION_SERVER_URL: str = os.getenv("EVOLUTION_SERVER_URL", "")
+    EVOLUTION_NAME_INSTANCE: str =  os.getenv("EVOLUTION_NAME_INSTANCE", "")
+    
     # Números autorizados a usar o bot
-    AUTHORIZED_NUMBERS: list = os.getenv("AUTHORIZED_NUMBERS", "").split(",") if os.getenv("AUTHORIZED_NUMBERS") else []
+    AUTHORIZED_NUMBERS: list[str] = os.getenv("AUTHORIZED_NUMBERS", "").split(",") if os.getenv("AUTHORIZED_NUMBERS") else []
