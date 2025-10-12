@@ -30,6 +30,10 @@ class OpenaiIntegration:
                 max_output_tokens=512,
                 store=True
             )
+        except Exception as e:
+            logger.error(f"Erro ao criar responsta da OpenAI para {WhatsappMessage.to_number}: {e}")
+            raise e
+        else:
             logger.info(f"Resposta gerada com sucesso para {WhatsappMessage.to_number}")
             WhatsappMessage.add_to_history({
                 "id": response.output[0].id,
@@ -41,7 +45,4 @@ class OpenaiIntegration:
                     }
                 ]
             })
-            return response
-        except Exception as e:
-            logger.error(f"Erro ao gerar resposta para {WhatsappMessage.to_number}: {e}")
-            raise e
+            return response.output[0].content[0].text

@@ -13,7 +13,7 @@ class EvolutionIntegration:
         self.base_url: str = Config.EVOLUTION_SERVER_URL
         self.nameInstance: str = format_url(Config.EVOLUTION_NAME_INSTANCE)
 
-    def send_message(self, whatsappMessage: WhatsappMessage) -> bool:
+    def send_message(self, whatsappMessage: WhatsappMessage) -> None:
         """
         Envia uma mensagem via EvolutionAPI.
         """
@@ -30,17 +30,8 @@ class EvolutionIntegration:
         try:
             response: Response = requests.post(url, json=payload, headers=headers)
             response.raise_for_status()
-            logger.info(f"Mensagem enviada com sucesso para {whatsappMessage.to_number}")
-            whatsappMessage.add_to_history({
-                "role": "user", 
-                "content": [
-                    {
-                        "type": "input_text", 
-                        "text": whatsappMessage.message_text
-                    }
-                ]
-            })
-            return True
         except (requests.HTTPError, requests.RequestException) as e:
             logger.error(f"Erro ao enviar mensagem para {whatsappMessage.to_number}: {e}")
-            return False
+            raise e
+        else:
+            logger.info(f"Mensagem enviada com sucesso para {whatsappMessage.to_number}")
