@@ -36,30 +36,29 @@ def whatsapp_webhook():
         return jsonify({"status": "error", "message": "Requisição vazia"}), 400
     
     telefone: str = get_number(payload['data']['key'].get('remoteJid', ''))
-    if telefone in Config.AUTHORIZED_NUMBERS and not payload['data']['key']['fromMe']:
+    if telefone in Config.AUTHORIZED_NUMBERS :
         openAI: OpenaiIntegration = OpenaiIntegration()
         evolutionAPI: EvolutionIntegration = EvolutionIntegration()
-        zapMessage: WhatsappMessage = WhatsappMessage(
-            to_number= telefone,
-            message_text= payload['data']['message']['conversation'],
-        )
         message: Message = Message(
             role="user",
             content=[
                 ContentItem(
                     type="input_text",
-                    text=zapMessage.message_text
+                    text=payload['data']['message']['conversation']
                 )
             ]
         )
-        zapMessage.add_to_history(message.model_dump(exclude_none=True))
-        logger.info(f"Mensagem recebida de {telefone}: {zapMessage.message_text}")
+        zapMessage: WhatsappMessage = WhatsappMessage(
+            to_number= telefone,
+            message= message,
+        )
+        zapMessage.add_to_history()
+        logger.info(f"Mensagem recebida de {telefone}: {zapMessage.message.content[0].text}")
         try:
-            responseAI: str = openAI.create_response(zapMessage)
+            openAI.create_response(zapMessage)
         except Exception:
             return jsonify({"status": "error", "message": "Erro ao criar mensagem"}), 500
         else:
-            zapMessage.message_text = responseAI
             try:
                 evolutionAPI.send_message(zapMessage)
             except Exception:
