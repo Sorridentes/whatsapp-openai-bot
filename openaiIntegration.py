@@ -1,5 +1,7 @@
-from openai import OpenAI
 from config import Config
+from message import Message
+from contentItem import ContentItem
+from openai import OpenAI
 from whatsappMessage import WhatsappMessage
 from typing import Any
 import logging
@@ -31,18 +33,18 @@ class OpenaiIntegration:
                 store=True
             )
         except Exception as e:
-            logger.error(f"Erro ao criar responsta da OpenAI para {WhatsappMessage.to_number}: {e}")
+            logger.error(f"Erro ao criar responsta da OpenAI para {WhatsappMessage.to_number}: %s", e, exc_info=True)
             raise e
         else:
             logger.info(f"Resposta gerada com sucesso para {WhatsappMessage.to_number}")
-            WhatsappMessage.add_to_history({
-                "id": response.output[0].id,
-                "role": "assistant", 
-                "content": [
-                    {
-                        "type": "output_text", 
-                        "text": response.output[0].content[0].text
-                    }
-                ]
-            })
+            message: Message = Message(
+                id=response.output[0].id, 
+                role="assistant", 
+                content=[
+                    ContentItem(
+                        type="output_text", 
+                        text=response.output[0].content[0].text
+                    )
+                ])
+            WhatsappMessage.add_to_history(message.model_dump(exclude_none=True))
             return response.output[0].content[0].text

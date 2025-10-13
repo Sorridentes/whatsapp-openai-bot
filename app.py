@@ -1,4 +1,6 @@
 from config import Config
+from message import Message
+from contentItem import ContentItem
 from whatsappMessage import WhatsappMessage
 from openaiIntegration import OpenaiIntegration
 from evolutionIntegration import EvolutionIntegration
@@ -37,29 +39,29 @@ def whatsapp_webhook():
     if telefone in Config.AUTHORIZED_NUMBERS and not payload['data']['key']['fromMe']:
         openAI: OpenaiIntegration = OpenaiIntegration()
         evolutionAPI: EvolutionIntegration = EvolutionIntegration()
-        context: str = payload['data']['message']['conversation']
-        message: WhatsappMessage = WhatsappMessage(
+        zapMessage: WhatsappMessage = WhatsappMessage(
             to_number= telefone,
-            message_text= context,
+            message_text= payload['data']['message']['conversation'],
         )
-        message.add_to_history({
-            "role": "user", 
-            "content": [
-                {
-                    "type": "input_text", 
-                    "text": context
-                }
+        message: Message = Message(
+            role="user",
+            content=[
+                ContentItem(
+                    type="input_text",
+                    text=zapMessage.message_text
+                )
             ]
-        })
-        logger.info(f"Mensagem recebida de {telefone}: {context}")
+        )
+        zapMessage.add_to_history(message.model_dump(exclude_none=True))
+        logger.info(f"Mensagem recebida de {telefone}: {zapMessage.message_text}")
         try:
-            responseAI: str = openAI.create_response(message)
+            responseAI: str = openAI.create_response(zapMessage)
         except Exception:
             return jsonify({"status": "error", "message": "Erro ao criar mensagem"}), 500
         else:
-            message.message_text = responseAI
+            zapMessage.message_text = responseAI
             try:
-                evolutionAPI.send_message(message)
+                evolutionAPI.send_message(zapMessage)
             except Exception:
                 return jsonify({"status": "error", "message": "Erro ao enviar mensagem"}), 500
         return {"status": "enviada"}, 200
