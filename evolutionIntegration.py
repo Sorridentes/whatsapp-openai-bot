@@ -31,7 +31,7 @@ class EvolutionIntegration:
             response: Response = requests.post(url, json=payload, headers=headers)
             response.raise_for_status()
         except (requests.HTTPError, requests.RequestException) as e:
-            logger.error(f"Erro ao enviar mensagem para {whatsappMessage.to_number}: {e}")
+            logger.error(f"Erro ao enviar mensagem para {whatsappMessage.to_number}: %s", e, exc_info=True)
             raise e
         else:
             logger.info(f"Mensagem enviada com sucesso para {whatsappMessage.to_number}")
