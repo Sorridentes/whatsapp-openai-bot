@@ -5,74 +5,114 @@ from whatsappMessage import WhatsappMessage
 from openaiIntegration import OpenaiIntegration
 from evolutionIntegration import EvolutionIntegration
 from flask import Flask, request, jsonify
-from typing import Any
+from typing import Any, Literal, overload
 import logging
 
 # Configurações do Flask e logging
 app = Flask(__name__)
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger: logging.Logger = logging.getLogger(__name__)
 
+ACCEPTABLE_TYPES = Literal[
+    "conversation",
+    # "audioMessage",
+    # "imageMessage",
+    # "documentMessage"
+]
+
+
 # Funções auxiliares
-def get_number(strTelefone: Any) -> str:  
+def get_number(strTelefone: Any) -> str:
     tel: str = strTelefone.split("@")[0]
     if len(tel) == 12:
         tel = tel[:3] + "9" + tel[4:]
         logger.info(f"Número ajustado para formato com 13 dígitos")
-    
+
     logger.info(f"Número extraído: {tel}")
     return tel
 
+
+# @overload
+def process_input(type: Literal["conversation"], payload: dict[str, Any]) -> Message:
+    message: Message = Message(
+        role="user",
+        content=[
+            ContentItem(
+                type="input_text", text=payload["data"]["message"]["conversation"]
+            )
+        ],
+    )
+    return message
+
+
+# @overload
+# def process_input(type: Literal["audioMessage"], payload: dict[str, Any]) -> Message:
+
+# @overload
+# def process_input(type: Literal["imageMessage"], payload: dict[str, Any]) -> Message:
+
+# @overload
+# def process_input(type: Literal["documentMessage"], payload: dict[str, Any]) -> Message:
+
+
 # Mapeamento das rotas
-@app.route('/v1/webhook/whatsapp', methods=['POST'])
+@app.route("/v1/webhook/whatsapp", methods=["POST"])
 def whatsapp_webhook():
-    payload:  dict[str, Any] | None = request.json
+    payload: dict[str, Any] | None = request.json
     logger.info(f"Webhook recebido: {payload}")
 
     if not payload:
         return jsonify({"status": "error", "message": "Requisição vazia"}), 400
-    
-    telefone: str = get_number(payload['data']['key'].get('remoteJid', ''))
-    if telefone in Config.AUTHORIZED_NUMBERS :
+
+    telefone: str = get_number(payload["data"]["key"].get("remoteJid", ""))
+    if telefone in Config.AUTHORIZED_NUMBERS and not payload["data"]["key"]["fromMe"]:
+        type: ACCEPTABLE_TYPES = payload["data"].get("messageType", "unknown")
         openAI: OpenaiIntegration = OpenaiIntegration()
         evolutionAPI: EvolutionIntegration = EvolutionIntegration()
-        message: Message = Message(
-            role="user",
-            content=[
-                ContentItem(
-                    type="input_text",
-                    text=payload['data']['message']['conversation']
-                )
-            ]
-        )
+        message: Message = process_input(type=type, payload=payload)
         zapMessage: WhatsappMessage = WhatsappMessage(
-            to_number= telefone,
-            message= message,
+            to_number=telefone,
+            message=message,
         )
-        zapMessage.add_to_history()
-        logger.info(f"Mensagem recebida de {telefone}: {zapMessage.message.content[0].text}")
+        logger.info(
+            f"Mensagem recebida de {telefone}: {zapMessage.message.content[0].text}"
+        )
+        zapMessage.add_to_history_DB()
         try:
             openAI.create_response(zapMessage)
         except Exception:
-            return jsonify({"status": "error", "message": "Erro ao criar mensagem"}), 500
+            return (
+                jsonify({"status": "error", "message": "Erro ao criar mensagem"}),
+                500,
+            )
         else:
             try:
                 evolutionAPI.send_message(zapMessage)
             except Exception:
-                return jsonify({"status": "error", "message": "Erro ao enviar mensagem"}), 500
+                return (
+                    jsonify({"status": "error", "message": "Erro ao enviar mensagem"}),
+                    500,
+                )
+        zapMessage.add_to_history_DB()
         return {"status": "enviada"}, 200
     else:
-        logger.warning(f"Número não autorizado ou mensagem enviada por si mesmo: {telefone}")
+        logger.warning(
+            f"Número não autorizado ou mensagem enviada por si mesmo: {telefone}"
+        )
         if telefone in Config.AUTHORIZED_NUMBERS:
             return jsonify({"status": "error", "message": "Número não autorizado"}), 403
         else:
-            return jsonify({"status": "skipped", "message": "Mensagem enviada por si mesmo"}), 200
-            
+            return (
+                jsonify(
+                    {"status": "skipped", "message": "Mensagem enviada por si mesmo"}
+                ),
+                200,
+            )
 
-@app.route('/')
+
+@app.route("/")
 def home():
     return """
     <html>
@@ -115,5 +155,6 @@ def home():
     </html>
     """
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80, debug=False)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=80, debug=False)

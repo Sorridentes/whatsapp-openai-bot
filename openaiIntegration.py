@@ -1,10 +1,10 @@
-from config import Config
-from message import Message
-from contentItem import ContentItem
-from openai import OpenAI
-from whatsappMessage import WhatsappMessage
 from typing import Any
+from config import Config
+from openai import OpenAI
 import logging
+from contentItem import ContentItem
+from message import Message
+from whatsappMessage import WhatsappMessage
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class OpenaiIntegration:
                     "id": Config.OPENAI_PROMPT_ID,
                     "version": Config.PROMPT_ID_VERSION
                 },
-                input=zapMessage.history,
+                input=zapMessage.history_to_DB,
                 text={
                     "format": {
                     "type": "text"
@@ -33,18 +33,17 @@ class OpenaiIntegration:
                 store=True
             )
         except Exception as e:
-            logger.error(f"Erro ao criar responsta da OpenAI para {zapMessage.to_number}: %s", e, exc_info=True)
+            logger.error(f"Erro ao criar responsta da OpenAI: %s", e, exc_info=True)
             raise e
         else:
-            logger.info(f"Resposta gerada com sucesso para {zapMessage.to_number}")
-            message: Message = Message(
-                id=response.output[0].id, 
-                role="assistant", 
+            zapMessage.message = Message(
+                role="assistant",
                 content=[
                     ContentItem(
-                        type="output_text", 
+                        type="output_text",
                         text=response.output[0].content[0].text
                     )
-                ])
-            zapMessage.message = message
-            zapMessage.add_to_history()
+                ]
+            )
+            logger.info(f"Resposta gerada com sucesso")
+            
