@@ -294,5 +294,4 @@ def serve_static(filename: str):
 
 if __name__ == "__main__":
     # Garante que a pasta statix existe
-    os.makedirs("static", exist_ok=True)
     app.run(host="0.0.0.0", port=80, debug=False)
