@@ -73,6 +73,7 @@ def process_input(type: ACCEPTABLE_TYPES, payload: dict[str, Any]) -> Message:
     Processa diferentes tipos de entrada do webhook e retorna uma variável Message
     """
     content_items: list[ContentItem] = []
+    logger.info(f"Tipo da messagem recebida: {type}")
 
     try:
         if type == "conversation":
@@ -237,7 +238,7 @@ def whatsapp_webhook():
                     200,
                 )
     except Exception as e:
-        logger.error(f"Erro geral no webhook: {e}")
+        logger.error(f"Erro geral no webhook: {e}", exc_info=True)
         return jsonify({"status": "error", "message": "Erro interno do servidor"}), 500
 
 
