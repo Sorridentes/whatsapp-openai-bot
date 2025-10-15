@@ -285,5 +285,13 @@ def home():
     """
 
 
+# Rota para servir arquivos estáticos (necessário para o ngrok)
+@app.route("/stattic/<path:filename>")
+def serve_static(filename: str):
+    return app.send_static_file(filename)
+
+
 if __name__ == "__main__":
+    # Garante que a pasta statix existe
+    os.makedirs("static", exist_ok=True)
     app.run(host="0.0.0.0", port=80, debug=False)
