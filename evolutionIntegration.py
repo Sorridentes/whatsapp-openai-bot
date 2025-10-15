@@ -20,7 +20,7 @@ class EvolutionIntegration:
         url: str = f"{self.base_url}/message/sendText/{self.nameInstance}"
         payload: dict[str, str] = {
             "number": f"{whatsappMessage.to_number}",
-            "text": f"{whatsappMessage.message_text}",
+            "text": f"{whatsappMessage.message.content[0].text}",
         }
         headers: dict[str, str] = {
             "apikey": self.apikey,
