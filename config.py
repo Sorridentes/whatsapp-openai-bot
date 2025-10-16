@@ -17,7 +17,7 @@ class Config:
     EVOLUTION_NAME_INSTANCE: str = os.getenv("EVOLUTION_NAME_INSTANCE", "")
 
     # Configuração do Ngrok
-    NGROK_URL: str = os.getenv("NGROK_URL", "")
+    NGROK_URL: str = os.getenv("NGROK_URL", ".")
 
     # Números autorizados a usar o bot
     AUTHORIZED_NUMBERS: list[str] = (

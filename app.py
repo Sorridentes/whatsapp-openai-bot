@@ -3,6 +3,7 @@ from config import Config
 from message import Message
 from contentItem import ContentItem
 from whatsappMessage import WhatsappMessage
+from decrypt import decryptByLink
 from openaiIntegration import OpenaiIntegration
 from evolutionIntegration import EvolutionIntegration
 from flask import Flask, request, jsonify
@@ -13,7 +14,9 @@ import os
 # Configurações do Flask e logging
 app = Flask(__name__)
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt=r"%d-%m-%Y %H:%M:%S",
 )
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -97,12 +100,20 @@ def process_input(type: ACCEPTABLE_TYPES, payload: dict[str, Any]) -> Message:
                     if type == "audioMessage":
                         media_type = "audio"
                     elif type == "imageMessage":
-                        media_type = mimetype
+                        if mimetype:
+                            media_type = mimetype
+                        else:
+                            media_type = "image"
                     else:
                         media_type = "document"
 
                     # Descriptografa e obtém URL pública
-                    public_url: str | None = media_type
+                    try:
+                        public_url: str = decryptByLink(
+                            link=media_url, mediaKey=media_key, mediaType=media_type
+                        )
+                    except Exception as e:
+                        raise e
                     logger.info(
                         f"Mídia descriptografada e disponível em : {public_url}"
                     )
@@ -180,7 +191,16 @@ def whatsapp_webhook():
                 )
 
             # Processa a entrada
-            message: Message = process_input(type=message_type, payload=payload)
+            try:
+                message: Message = process_input(type=message_type, payload=payload)
+            except Exception as e:
+                logger.error("Erro ao processar entrada", exc_info=True)
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": "Erro ao processar entrada do webhook",
+                    }
+                )
 
             # Cria a mensagem do Whatsapp
             zapMessage: WhatsappMessage = WhatsappMessage(
@@ -238,7 +258,7 @@ def whatsapp_webhook():
                     200,
                 )
     except Exception as e:
-        logger.error(f"Erro geral no webhook: {e}", exc_info=True)
+        logger.error(f"Erro geral no webhook", exc_info=True)
         return jsonify({"status": "error", "message": "Erro interno do servidor"}), 500
 
 

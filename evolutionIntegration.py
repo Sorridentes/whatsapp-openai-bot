@@ -7,6 +7,7 @@ from logging import Logger, getLogger
 
 logger: Logger = getLogger(__name__)
 
+
 class EvolutionIntegration:
     def __init__(self):
         self.apikey: str = Config.EVOLUTION_APIKEY
@@ -24,14 +25,19 @@ class EvolutionIntegration:
         }
         headers: dict[str, str] = {
             "apikey": self.apikey,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         try:
             response: Response = requests.post(url, json=payload, headers=headers)
             response.raise_for_status()
         except (requests.HTTPError, requests.RequestException) as e:
-            logger.error(f"Erro ao enviar mensagem para {whatsappMessage.to_number}: %s", e, exc_info=True)
+            logger.error(
+                f"Erro ao enviar mensagem para {whatsappMessage.to_number}",
+                exc_info=True,
+            )
             raise e
         else:
-            logger.info(f"Mensagem enviada com sucesso para {whatsappMessage.to_number}")
+            logger.info(
+                f"Mensagem enviada com sucesso para {whatsappMessage.to_number}"
+            )

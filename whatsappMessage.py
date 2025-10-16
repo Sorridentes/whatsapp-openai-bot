@@ -9,8 +9,8 @@ logger: logging.Logger = logging.getLogger(__name__)
 class WhatsappMessage(BaseModel):
     to_number: str
     message: Message
-    history_to_DB: list[Any] = []
-    history_to_AI: list[Any] = []
+    history_to_DB: list[dict[str, Any]] = []
+    history_to_AI: list[dict[str, Any]] = []
 
     def add_to_history_DB(self) -> None:
         if len(self.history_to_DB) > 6:
