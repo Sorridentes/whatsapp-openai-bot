@@ -19,6 +19,14 @@ class Config:
     # Configuração do Ngrok
     NGROK_URL: str = os.getenv("NGROK_URL", ".")
 
+    # Configuração do MongoDB
+    MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+    MONGODB_DB_NAME: str = os.getenv("MONGODB_DB_NAME", "whatsapp_bot")
+
+    # Configuração do Redis
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
+    BATCH_PROCESSING_DELAY: int = int(os.getenv("BATCH_PROCESSING_DELAY", "3"))
+
     # Números autorizados a usar o bot
     AUTHORIZED_NUMBERS: list[str] = (
         os.getenv("AUTHORIZED_NUMBERS", "").split(",")
