@@ -48,3 +48,21 @@ class OpenaiIntegration:
                 ],
             )
             logger.info(f"Resposta gerada com sucesso")
+
+    def _transcribe_audio(self, audio_url: str) -> str:
+        """
+        Usa OpenAI para transcrever áudio para texto
+        """
+        logger.info(f"Iniciando transcrição do áudio: {audio_url}")
+        try:
+            with open(audio_url, "rb") as audio_file:
+                transcript = self.client.audio.transcriptions.create(
+                    model="gpt-4o-mini-transcribe",
+                    file=audio_file,
+                    response_format="text",
+                )
+            logger.info(f"Transcrição concluída: {len(transcript)} caracteres")
+            return transcript
+        except Exception as e:
+            logger.error(f"Erro na transcrição OpenAI: {str(e)}")
+            raise e
