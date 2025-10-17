@@ -3,8 +3,7 @@ from redis import Redis
 from config import Config
 import logging
 import json
-from typing import Any
-from bson import ObjectId
+from typing import Any, Literal
 from datetime import datetime, timedelta, timezone
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -15,7 +14,7 @@ class MongoDB:
         self.client: MongoClient[Any] = MongoClient(Config.MONGODB_URI)
         self.db = self.client[Config.MONGODB_DB_NAME]
         self.conversations = self.db["conversations"]
-        self.media_cache = self.db["media_cache"]
+        self.temp_conversation = self.db["media_cache"]
 
         # Índices para otimizar as consultas de expiração
         self._create_indexes()
@@ -27,7 +26,7 @@ class MongoDB:
             self.conversations.create_index([("phone_number", 1), ("expires_at", 1)])
 
             # Índice para expiração de mídias
-            self.media_cache.create_index([("expires_at", 1)])
+            self.temp_conversation.create_index([("expires_at", 1)])
 
             # Índice para busca por telefone
             self.conversations.create_index([("phone_number", 1)])
@@ -37,15 +36,19 @@ class MongoDB:
         except Exception as e:
             logger.error(f"Erro ao criar índices: {str(e)}")
 
-    def save_conversation(
-        self, phone_number: str, message_data: dict[str, Any]
+    def save(
+        self,
+        phone_number: str,
+        message_data: dict[str, Any],
+        db_type: Literal["conversation", "temp_conversation"] = "conversation",
     ) -> None:
         """Salva uma mensagem no histórico da conversa com expiração de 1 dia"""
+        db = self.conversations if db_type == "conversation" else self.temp_conversation
         try:
             # Data de expiração: 1 dia a partir de agora
             expires_at = datetime.now(timezone.utc) + timedelta(days=1)
 
-            self.conversations.update_one(
+            db.update_one(
                 {"phone_number": phone_number},
                 {
                     "$push": {
@@ -70,13 +73,17 @@ class MongoDB:
             logger.error(f"Erro ao salvar conversa: %s", e)
             raise e
 
-    def get_conversation_history(
-        self, phone_number: str, limit: int = 10
+    def get_history(
+        self,
+        phone_number: str,
+        db_type: Literal["conversation", "temp_conversation"] = "conversation",
+        limit: int = 10,
     ) -> list[dict[str, Any]]:
         """Recupera o histórico de conversa, filtrando mensagens expiradas"""
+        db = self.conversations if db_type == "conversation" else self.temp_conversation
         try:
             # Busca a conversa do telefone
-            result = self.conversations.find_one(
+            result = db.find_one(
                 {"phone_number": phone_number},
                 {"messages": {"$slice": -limit}},  # Pega as últimas 'limit' mensagens
             )
@@ -91,43 +98,25 @@ class MongoDB:
                 for msg in result.get("messages", [])
                 if msg.get("message_expires_at", current_time + timedelta(days=1))
                 > current_time
+                or db_type == "temp_conversation"
             ]
 
             logger.info(
-                f"Recuperadas {len(valid_messages)} mensagens válidas de {len(result.get('messages', []))} totais para {phone_number}"
+                f"Recuperadas {len(valid_messages)} mensagens válidas para {phone_number}"
             )
             return valid_messages
 
         except Exception as e:
             logger.error(f"Erro ao recuperar histórico: {str(e)}")
-            return []
-
-    def save_media_reference(self, media_data: dict[str, Any]) -> str:
-        """Salva referência da mídia com expiração de 1 dia"""
-        try:
-            expires_at = datetime.now(timezone.utc) + timedelta(days=1)
-
-            result = self.media_cache.insert_one(
-                {
-                    **media_data,
-                    "created_at": datetime.now(timezone.utc),
-                    "expires_at": expires_at,
-                }
-            )
-
-            logger.info(f"Referência de mídia salva - Expira em: {expires_at}")
-            return str(result.inserted_id)
-        except Exception as e:
-            logger.error(f"Erro ao salvar referência da mídia: {str(e)}")
             raise e
 
-    def delete_media_reference(self, media_id: str) -> None:
-        """Remove referência da mídia"""
+    def delete_temp_conversation(self, phone_number: str) -> None:
+        """Remove a referencia do temporaria"""
         try:
-            self.media_cache.delete_one({"_id": ObjectId(media_id)})
-            logger.info(f"Referência de mídia {media_id} removida")
+            self.temp_conversation.delete_one({"phone_number": phone_number})
+            logger.info(f"Referência do telefone {phone_number} removida")
         except Exception as e:
-            logger.error(f"Erro ao remover referência da mídia: {str(e)}")
+            logger.error(f"Erro ao remover referência do telefono: {str(e)}")
             raise e
 
     def cleanup_expired_data(self) -> dict[str, int]:
@@ -146,7 +135,7 @@ class MongoDB:
             cleanup_stats["conversations_deleted"] = conversations_result.deleted_count
 
             # 2. Limpa mídias expiradas
-            media_result = self.media_cache.delete_many(
+            media_result = self.temp_conversation.delete_many(
                 {"expires_at": {"$lt": current_time}}
             )
             cleanup_stats["media_references_deleted"] = media_result.deleted_count
@@ -198,13 +187,13 @@ class RedisQueue:
         self.redis: Redis = Redis.from_url(Config.REDIS_URL)  # type: ignore[arg-type]
         self.timeout: int = Config.BATCH_PROCESSING_DELAY
 
-    def add_message(self, phone: str, message_data: dict[str, Any]) -> None:
+    def add_message(self, id: str, message_data: dict[str, Any]) -> None:
         """Adiciona mensagem à fila do Redis"""
         try:
-            key = f"whatsapp:{phone}"
-            self.redis.rpush(key, str(message_data))
+            key = f"whatsapp:{id}"
+            self.redis.rpush(key, json.dumps(message_data, ensure_ascii=False))
             self.redis.expire(key, self.timeout)
-            logger.debug(f"Mensagem adicionada à fila para {phone}")
+            logger.debug(f"Mensagem adicionada à fila para {id}")
         except Exception as e:
             logger.error(f"Erro ao adicionar mensagem ao Redis: {str(e)}")
             raise e

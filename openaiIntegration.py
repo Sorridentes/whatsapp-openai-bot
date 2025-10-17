@@ -20,7 +20,7 @@ class OpenaiIntegration:
         """
         try:
             # Prepara o input para a OpenAI baseado no histórico
-            input_data: Any = zapMessage.history_to_DB
+            input_data: Any = zapMessage.history_to_AI
             print(input_data)
 
             response: Any = self.client.responses.create(
@@ -66,6 +66,7 @@ class OpenaiIntegration:
         except Exception as e:
             logger.error(f"Erro na transcrição OpenAI: {str(e)}")
             raise e
+
 
 # Instâncias globais
 clientAI: OpenaiIntegration = OpenaiIntegration()

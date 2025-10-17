@@ -1,17 +1,11 @@
-import base64
-from config import Config
-from message import Message
 from contentItem import ContentItem
-from whatsappMessage import WhatsappMessage
-from decrypt import decryptByLink
-from openaiIntegration import clientAI
-from evolutionIntegration import clientEvolution
+from database import redis_queue
 from flask import Flask, request, jsonify
-from typing import Any, Literal, Optional, overload
-from database import mongo_db, redis_queue
+from typing import Any, Literal
 from messageProcessor import message_processor
 import logging
 import asyncio
+import threading
 import os
 
 # Configurações do Flask e logging
@@ -29,12 +23,15 @@ ACCEPTABLE_TYPES = Literal[
 
 
 # Funções auxiliares
-def async_processor(message: Message):
+def async_processor(type: ACCEPTABLE_TYPES, phone_number: str):
     """Executa o processamento assíncrono em thread separada"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(message_processor.process_input(message))
+    loop.run_until_complete(
+        message_processor.process_phone_messages(type, phone_number)
+    )
     loop.close()
+
 
 def get_number(strTelefone: Any) -> str:
     tel: str = strTelefone.split("@")[0]
@@ -57,216 +54,43 @@ def cleanup_file(file_path: str) -> None:
         raise e
 
 
-@overload
-def process_input(
-    type: Literal["conversation"], payload: dict[str, Any]
-) -> Message: ...
-
-
-@overload
-def process_input(
-    type: Literal["audioMessage"], payload: dict[str, Any]
-) -> Message: ...
-
-
-@overload
-def process_input(
-    type: Literal["imageMessage"], payload: dict[str, Any]
-) -> Message: ...
-
-
-@overload
-def process_input(
-    type: Literal["documentMessage"], payload: dict[str, Any]
-) -> Message: ...
-
-
-def process_input(type: ACCEPTABLE_TYPES, payload: dict[str, Any]) -> Message:
-    """
-    Processa diferentes tipos de entrada do webhook e retorna uma variável Message
-    """
-    content_items: list[ContentItem] = []
-    logger.info(f"Tipo da messagem recebida: {type}")
-
-    try:
-        if type == "conversation":
-            # Mensagem de texto simples
-            text: str = payload["data"]["message"].get("conversation", "")
-            content_items.append(ContentItem(type="input_text", text=text))
-
-        else:
-            # Processa mídia (áudio, imagem, documento)
-            message_data: dict[str, Any] = payload["data"]["message"].get(type, "")
-
-            # Extrai informações da mídia
-            media_url: Optional[str] = message_data.get("url")
-            media_key: bytes = base64.b64decode(message_data.get("mediaKey", b""))
-            mimetype: Optional[str] = message_data.get("mimetype")
-            caption: Optional[str] = message_data.get("caption")
-
-            if media_url and media_key:
-                try:
-                    # Determina o tipo da mídia para o decrypt
-                    if type == "audioMessage":
-                        media_type = "audio"
-                    elif type == "imageMessage":
-                        if mimetype:
-                            media_type = mimetype
-                        else:
-                            media_type = "image"
-                    else:
-                        media_type = "document"
-
-                    # Descriptografa e obtém URL pública
-                    try:
-                        public_url: str = decryptByLink(
-                            link=media_url, mediaKey=media_key, mediaType=media_type
-                        )
-                    except Exception as e:
-                        raise e
-                    logger.info(
-                        f"Mídia descriptografada e disponível em : {public_url}"
-                    )
-
-                    # Adiciona o item de conteúdo apropriado
-                    if type == "imageMessage":
-                        # Se houver caption, adiciona como texto também
-                        if caption:
-                            content_items.append(
-                                ContentItem(type="input_text", text=caption)
-                            )
-
-                        content_items.append(
-                            ContentItem(type="input_image", image_url=public_url)
-                        )
-
-                    elif type == "audioMessage":
-                        # Transforma o audio em texto
-                        text_of_audio: str = clientAI.transcribe_audio(public_url)
-                        content_items.append(
-                            ContentItem(type="input_text", text=text_of_audio)
-                        )
-
-                    elif type == "documentMessage":
-                        if caption:
-                            content_items.append(
-                                ContentItem(type="input_text", text=caption)
-                            )
-
-                        content_items.append(
-                            ContentItem(type="input_file", file_url=public_url)
-                        )
-                except Exception as e:
-                    logger.error(f"Erro ao processar mídia: {e}")
-                    raise e
-        message = Message(role="user", content=content_items)
-        return message
-
-    except Exception as e:
-        logger.error(f"Erro geral no process_input: {e}")
-        raise e
-
-
 # Mapeamento das rotas
 @app.route("/v1/webhook/whatsapp", methods=["POST"])
 def whatsapp_webhook():
     payload: dict[str, Any] | None = request.json
     logger.info(f"Webhook recebido: {payload}")
-    # logger.info(f"Webhook recebido - Tipo: {payload.get('data', {}).get('messageType', 'unkown') if payloaad else 'no payload'}"")
-    
-    # Recupera todas as mensagens pendentes
+
+    if not payload:
+        return jsonify({"error": "no payload"}), 400
+
+    raw_jid = payload["data"]["key"].get("remoteJid", "")
+    if not raw_jid:
+        logger.warning("Não foi possível extrair número do payload")
+        return jsonify({"error": "phone not found"}), 400
+
+    phone_number = get_number(raw_jid)
+    msg_type: ACCEPTABLE_TYPES = payload["data"].get("messageType") or "conversation"
+    # if msg_type == 'audioMessage':
+    #     content = ContentItem(type=msg_type, )
+
+    # salva a mensagem crua na fila Redis (será desserializada pelo messageProcessor)
     try:
-        if not payload:
-            return jsonify({"status": "error", "message": "Requisição vazia"}), 400
-
-        phone: str = get_number(payload["data"]["key"].get("remoteJid", ""))
-
-        if (
-            phone in Config.AUTHORIZED_NUMBERS
-            and not payload["data"]["key"]["fromMe"]
-        ):
-            try:
-                message_type: ACCEPTABLE_TYPES = payload["data"].get(
-                    "messageType", "unknown"
-                )
-            except TypeError as e:
-                logger.warning(f"Tipo de messagem não suportado: {e}")
-                return (
-                    jsonify(
-                        {
-                            "status": "skipped",
-                            "message": "Tipo de messagemnão suportado",
-                        }
-                    ),
-                    200,
-                )
-
-            # Processa a entrada
-            try:
-                message: Message = process_input(type=message_type, payload=payload)
-            except Exception as e:
-                logger.error("Erro ao processar entrada", exc_info=True)
-                return jsonify(
-                    {
-                        "status": "error",
-                        "message": "Erro ao processar entrada do webhook",
-                    }
-                )
-
-            # Cria a mensagem do Whatsapp
-            zapMessage: WhatsappMessage = WhatsappMessage(
-                to_number=phone,
-                message=message,
-            )
-            logger.info(
-                f"Mensagem recebida de {phone} com {len(message.content)} {'item' if len(message.content) <= 1 else 'itens'} de conteúdo"
-            )
-
-            # Adiciona ao histórico
-            zapMessage.add_to_history_DB()
-
-            try:
-                clientAI.create_response(zapMessage)
-            except Exception:
-                return (
-                    jsonify({"status": "error", "message": "Erro ao criar mensagem"}),
-                    500,
-                )
-
-            try:
-                clientEvolution.send_message(zapMessage)
-            except Exception:
-                return (
-                    jsonify({"status": "error", "message": "Erro ao enviar mensagem"}),
-                    500,
-                )
-
-            # Adiciona resposta ao histórico
-            zapMessage.add_to_history_DB()
-            return jsonify({"status": "enviada"}), 200
-
-        else:
-            logger.warning(
-                f"Número não autorizado ou mensagem enviada por si mesmo: {phone}"
-            )
-            if phone in Config.AUTHORIZED_NUMBERS:
-                return (
-                    jsonify({"status": "error", "message": "Número não autorizado"}),
-                    403,
-                )
-            else:
-                return (
-                    jsonify(
-                        {
-                            "status": "skipped",
-                            "message": "Mensagem enviada por si mesmo",
-                        }
-                    ),
-                    200,
-                )
+        redis_queue.add_message(phone_number, payload)
     except Exception as e:
-        logger.error(f"Erro geral no webhook", exc_info=True)
-        return jsonify({"status": "error", "message": "Erro interno do servidor"}), 500
+        logger.error(f"Erro ao salvar mensagem no Redis: {e}", exc_info=True)
+        return jsonify({"error": "redis error"}), 500
+
+    # dispara o processamento em background (após BATCH_PROCESSING_DELAY dentro do processor)
+    try:
+        thread = threading.Thread(
+            target=async_processor, args=(msg_type, phone_number), daemon=True
+        )
+        thread.start()
+    except Exception as e:
+        logger.error(f"Erro ao iniciar processamento assíncrono: {e}", exc_info=True)
+        return jsonify({"error": "processing start failed"}), 500
+
+    return jsonify({"status": "queued", "phone": phone_number}), 202
 
 
 @app.route("/")

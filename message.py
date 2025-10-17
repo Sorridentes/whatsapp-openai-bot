@@ -34,8 +34,6 @@ if __name__ == "__main__":
     msg = Message(
         id="123",
         role="user",
-        content=[
-            ContentItem(type="input_image", image_url="https://exemplo.com/img.jpg")
-        ],
+        content=[ContentItem(type="input_image", url="https://exemplo.com/img.jpg")],
     )
     print(msg)
