@@ -49,7 +49,7 @@ class OpenaiIntegration:
             )
             logger.info(f"Resposta gerada com sucesso")
 
-    def _transcribe_audio(self, audio_url: str) -> str:
+    def transcribe_audio(self, audio_url: str) -> str:
         """
         Usa OpenAI para transcrever áudio para texto
         """
@@ -66,3 +66,6 @@ class OpenaiIntegration:
         except Exception as e:
             logger.error(f"Erro na transcrição OpenAI: {str(e)}")
             raise e
+
+# Instâncias globais
+clientAI: OpenaiIntegration = OpenaiIntegration()

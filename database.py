@@ -158,45 +158,6 @@ class MongoDB:
             logger.error(f"Erro durante limpeza de dados expirados: {str(e)}")
             raise e
 
-    def get_expiration_stats(self) -> dict[str, Any]:
-        """Retorna estatísticas sobre dados próximos da expiração"""
-        try:
-            current_time = datetime.now(timezone.utc)
-            one_hour_from_now = current_time + timedelta(hours=1)
-            twenty_four_hours_from_now = current_time + timedelta(hours=24)
-
-            stats = {
-                "conversations_expiring_in_1h": self.conversations.count_documents(
-                    {"expires_at": {"$gte": current_time, "$lte": one_hour_from_now}}
-                ),
-                "conversations_expiring_in_24h": self.conversations.count_documents(
-                    {
-                        "expires_at": {
-                            "$gte": current_time,
-                            "$lte": twenty_four_hours_from_now,
-                        }
-                    }
-                ),
-                "total_active_conversations": self.conversations.count_documents(
-                    {"expires_at": {"$gte": current_time}}
-                ),
-                "expired_conversations": self.conversations.count_documents(
-                    {"expires_at": {"$lt": current_time}}
-                ),
-                "media_expiring_in_1h": self.media_cache.count_documents(
-                    {"expires_at": {"$gte": current_time, "$lte": one_hour_from_now}}
-                ),
-                "total_active_media": self.media_cache.count_documents(
-                    {"expires_at": {"$gte": current_time}}
-                ),
-            }
-
-            return stats
-
-        except Exception as e:
-            logger.error(f"Erro ao obter estatísticas de expiração: {str(e)}")
-            return {"error": str(e)}
-
     def extend_conversation_expiration(
         self, phone_number: str, additional_days: int = 1
     ) -> bool:
@@ -237,13 +198,13 @@ class RedisQueue:
         self.redis: Redis = Redis.from_url(Config.REDIS_URL)  # type: ignore[arg-type]
         self.timeout: int = Config.BATCH_PROCESSING_DELAY
 
-    def add_message(self, phone_number: str, message_data: dict[str, Any]) -> None:
+    def add_message(self, phone: str, message_data: dict[str, Any]) -> None:
         """Adiciona mensagem à fila do Redis"""
         try:
-            key = f"whatsapp:{phone_number}"
+            key = f"whatsapp:{phone}"
             self.redis.rpush(key, str(message_data))
             self.redis.expire(key, self.timeout)
-            logger.debug(f"Mensagem adicionada à fila para {phone_number}")
+            logger.debug(f"Mensagem adicionada à fila para {phone}")
         except Exception as e:
             logger.error(f"Erro ao adicionar mensagem ao Redis: {str(e)}")
             raise e

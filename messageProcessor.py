@@ -1,23 +1,44 @@
 import logging
 import asyncio
-from typing import Any
+from typing import Any, Literal, Optional, overload
 from database import redis_queue, mongo_db
 from whatsappMessage import WhatsappMessage
 from message import Message
-from openaiIntegration import OpenaiIntegration
-from evolutionIntegration import EvolutionIntegration
+from contentItem import ContentItem
+from openaiIntegration import clientAI
 from decrypt import decryptByLink
 from config import Config
+import base64
 
 logger: logging.Logger = logging.getLogger(__name__)
-
+ACCEPTABLE_TYPES = Literal[
+    "conversation", "audioMessage", "imageMessage", "documentMessage"
+]
 
 class MessageProcessor:
-    def __init__(self):
-        self.openai_integration = OpenaiIntegration()
-        self.evolution_integration = EvolutionIntegration()
+    @overload
+    async def _process_single_message_content( self,
+        type: Literal["conversation"], msg_data: dict[str, Any]
+    ) -> list[ContentItem]: ...
 
-    async def process_phone_messages(self, phone_number: str):
+    @overload
+    async def _process_single_message_content(self,
+        type: Literal["audioMessage"], msg_data: dict[str, Any]
+    ) -> list[ContentItem]: ...
+
+
+    @overload
+    async def _process_single_message_content(self,
+        type: Literal["imageMessage"], msg_data: dict[str, Any]
+    ) -> list[ContentItem]: ...
+
+
+    @overload
+    async def _process_single_message_content(self,
+        type: Literal["documentMessage"], msg_data: dict[str, Any]
+    ) -> list[ContentItem]: ...
+
+    async def process_input(self, type: ACCEPTABLE_TYPES, phone_number:str, messageInput: dict[str, Any]) -> Message:
         """Processa TODAS as mensagens pendentes de um telefone de uma vez"""
         try:
             # Aguarda o timeout para agrupar mensagens
@@ -28,7 +49,7 @@ class MessageProcessor:
 
             if not pending_messages:
                 logger.info(f"Nenhuma mensagem pendente para {phone_number}")
-                return
+                pass
 
             logger.info(
                 f"Processando {len(pending_messages)} mensagens em lote para {phone_number}"
@@ -77,10 +98,7 @@ class MessageProcessor:
             zap_message.history_to_DB = all_messages
 
             # Gera UMA resposta da OpenAI para todo o contexto
-            self.openai_integration.create_response(zap_message)
-
-            # Envia UMA resposta via Evolution
-            self.evolution_integration.send_message(zap_message)
+            clientAI.create_response(zap_message)
 
             # Salva TODAS as mensagens no MongoDB
             for msg_data in messages_data:
@@ -97,59 +115,86 @@ class MessageProcessor:
             logger.error(f"Erro no processamento em lote: {str(e)}")
 
     async def _process_single_message_content(
-        self, msg_data: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Processa o conteúdo de uma única mensagem (especialmente mídias)"""
-        try:
-            message_dict = msg_data["message"].copy()
+            self, type: ACCEPTABLE_TYPES, msg_data: dict[str, Any]
+        ) -> list[ContentItem]:
+            """Processa o conteúdo de uma única mensagem (especialmente mídias)"""
+            logger.info(f"Tipo da messagem recebida: {type}")
 
-            # Processa mídias se existirem
-            for content_item in message_dict.get("content", []):
-                if content_item.get("type") in [
-                    "input_image",
-                    "input_file",
-                ] and content_item.get("media_key"):
-                    media_type = (
-                        "image/jpeg"
-                        if content_item["type"] == "input_image"
-                        else "document"
-                    )
+            try:
+                message_data: Any = msg_data["data"]["message"].get(type, "")
+                if type == "conversation":
+                    # Mensagem de texto simples
+                    return [ContentItem(type="input_text", text=message_data)]
+                else:
+                    # Extrai informações da mídia
+                    media_url: Optional[str] = message_data.get("url")
+                    media_key: bytes = base64.b64decode(message_data.get("mediaKey", b""))
+                    mimetype: Optional[str] = message_data.get("mimetype")
+                    caption: Optional[str] = message_data.get("caption")
 
-                    # Descriptografa e obtém URL temporária
-                    public_url = decryptByLink(
-                        link=content_item.get("image_url")
-                        or content_item.get("file_url"),
-                        mediaKey=content_item["media_key"],
-                        mediaType=media_type,
-                    )
+                    if media_url and media_key:
+                        try:
+                            # Determina o tipo da mídia para o decrypt
+                            if type == "audioMessage":
+                                media_type = "audio"
+                            elif type == "imageMessage":
+                                if mimetype:
+                                    media_type = mimetype
+                                else:
+                                    media_type = "image"
+                            else:
+                                media_type = "document"
 
-                    # Salva referência no MongoDB
-                    media_id = mongo_db.save_media_reference(
-                        {
-                            "phone_number": "temp",  # Será atualizado depois
-                            "original_url": content_item.get("image_url")
-                            or content_item.get("file_url"),
-                            "public_url": public_url,
-                            "media_key": content_item["media_key"],
-                            "media_type": media_type,
-                            "processed": False,
-                        }
-                    )
+                            # Descriptografa e obtém URL pública
+                            try:
+                                public_url: str = decryptByLink(
+                                    link=media_url, mediaKey=media_key, mediaType=media_type
+                                )
+                            except Exception as e:
+                                raise e
+                            
+                            logger.info(
+                                f"Mídia descriptografada e disponível em : {public_url}"
+                            )
 
-                    # Atualiza a URL para a pública temporária
-                    if content_item["type"] == "input_image":
-                        content_item["image_url"] = public_url
-                    else:
-                        content_item["file_url"] = public_url
+                            # Adiciona o item de conteúdo apropriado
+                            content_items: list[ContentItem] = []
+                            if type == "imageMessage":
+                                # Se houver caption, adiciona como texto também
+                                if caption:
+                                    content_items.append(
+                                        ContentItem(type="input_text", text=caption)
+                                    )
 
-                    content_item["media_id"] = media_id
+                                content_items.append(
+                                    ContentItem(type="input_image", image_url=public_url)
+                                )
+                                return content_items
 
-            return message_dict
+                            elif type == "audioMessage":
+                                # Transforma o audio em texto
+                                text_of_audio: str = clientAI.transcribe_audio(public_url)
+                                return [ContentItem(type="input_text", text=text_of_audio)]
 
-        except Exception as e:
-            logger.error(f"Erro ao processar conteúdo da mensagem: {str(e)}")
-            return msg_data["message"]  # Retorna original em caso de erro
+                            elif type == "documentMessage":
+                                if caption:
+                                    content_items.append(
+                                        ContentItem(type="input_text", text=caption)
+                                    )
 
+                                content_items.append(
+                                    ContentItem(type="input_file", file_url=public_url)
+                                )
+                                return content_items
+                        except Exception as e:
+                            logger.error(f"Erro ao processar mídia: {e}")
+                            raise e
+                    raise Exception("Não foi enviado o midiaKey ou a url da mídia")
+
+            except Exception as e:
+                logger.error(f"Erro geral no process_input: {e}")
+                raise e
+            
 
 # Instância global
 message_processor = MessageProcessor()

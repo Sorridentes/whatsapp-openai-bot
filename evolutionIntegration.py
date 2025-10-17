@@ -41,3 +41,6 @@ class EvolutionIntegration:
             logger.info(
                 f"Mensagem enviada com sucesso para {whatsappMessage.to_number}"
             )
+
+# Instâncias globais
+clientEvolution: EvolutionIntegration = EvolutionIntegration()

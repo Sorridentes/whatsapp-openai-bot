@@ -4,11 +4,14 @@ from message import Message
 from contentItem import ContentItem
 from whatsappMessage import WhatsappMessage
 from decrypt import decryptByLink
-from openaiIntegration import OpenaiIntegration
-from evolutionIntegration import EvolutionIntegration
+from openaiIntegration import clientAI
+from evolutionIntegration import clientEvolution
 from flask import Flask, request, jsonify
 from typing import Any, Literal, Optional, overload
+from database import mongo_db, redis_queue
+from messageProcessor import message_processor
 import logging
+import asyncio
 import os
 
 # Configurações do Flask e logging
@@ -26,6 +29,13 @@ ACCEPTABLE_TYPES = Literal[
 
 
 # Funções auxiliares
+def async_processor(message: Message):
+    """Executa o processamento assíncrono em thread separada"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(message_processor.process_input(message))
+    loop.close()
+
 def get_number(strTelefone: Any) -> str:
     tel: str = strTelefone.split("@")[0]
     if len(tel) == 12:
@@ -132,7 +142,7 @@ def process_input(type: ACCEPTABLE_TYPES, payload: dict[str, Any]) -> Message:
 
                     elif type == "audioMessage":
                         # Transforma o audio em texto
-                        text_of_audio: str = ""
+                        text_of_audio: str = clientAI.transcribe_audio(public_url)
                         content_items.append(
                             ContentItem(type="input_text", text=text_of_audio)
                         )
@@ -163,15 +173,16 @@ def whatsapp_webhook():
     payload: dict[str, Any] | None = request.json
     logger.info(f"Webhook recebido: {payload}")
     # logger.info(f"Webhook recebido - Tipo: {payload.get('data', {}).get('messageType', 'unkown') if payloaad else 'no payload'}"")
-
+    
+    # Recupera todas as mensagens pendentes
     try:
         if not payload:
             return jsonify({"status": "error", "message": "Requisição vazia"}), 400
 
-        telefone: str = get_number(payload["data"]["key"].get("remoteJid", ""))
+        phone: str = get_number(payload["data"]["key"].get("remoteJid", ""))
 
         if (
-            telefone in Config.AUTHORIZED_NUMBERS
+            phone in Config.AUTHORIZED_NUMBERS
             and not payload["data"]["key"]["fromMe"]
         ):
             try:
@@ -204,22 +215,18 @@ def whatsapp_webhook():
 
             # Cria a mensagem do Whatsapp
             zapMessage: WhatsappMessage = WhatsappMessage(
-                to_number=telefone,
+                to_number=phone,
                 message=message,
             )
             logger.info(
-                f"Mensagem recebida de {telefone} com {len(message.content)} {'item' if len(message.content) <= 1 else 'itens'} de conteúdo"
+                f"Mensagem recebida de {phone} com {len(message.content)} {'item' if len(message.content) <= 1 else 'itens'} de conteúdo"
             )
 
             # Adiciona ao histórico
             zapMessage.add_to_history_DB()
 
-            # Integrações
-            openAI: OpenaiIntegration = OpenaiIntegration()
-            evolutionAPI: EvolutionIntegration = EvolutionIntegration()
-
             try:
-                openAI.create_response(zapMessage)
+                clientAI.create_response(zapMessage)
             except Exception:
                 return (
                     jsonify({"status": "error", "message": "Erro ao criar mensagem"}),
@@ -227,7 +234,7 @@ def whatsapp_webhook():
                 )
 
             try:
-                evolutionAPI.send_message(zapMessage)
+                clientEvolution.send_message(zapMessage)
             except Exception:
                 return (
                     jsonify({"status": "error", "message": "Erro ao enviar mensagem"}),
@@ -240,9 +247,9 @@ def whatsapp_webhook():
 
         else:
             logger.warning(
-                f"Número não autorizado ou mensagem enviada por si mesmo: {telefone}"
+                f"Número não autorizado ou mensagem enviada por si mesmo: {phone}"
             )
-            if telefone in Config.AUTHORIZED_NUMBERS:
+            if phone in Config.AUTHORIZED_NUMBERS:
                 return (
                     jsonify({"status": "error", "message": "Número não autorizado"}),
                     403,
