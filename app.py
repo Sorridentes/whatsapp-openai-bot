@@ -1,4 +1,3 @@
-from contentItem import ContentItem
 from database import redis_queue
 from flask import Flask, request, jsonify
 from typing import Any, Literal
@@ -6,7 +5,6 @@ from messageProcessor import message_processor
 import logging
 import asyncio
 import threading
-import os
 
 # Configurações do Flask e logging
 app = Flask(__name__)
@@ -43,17 +41,6 @@ def get_number(strTelefone: Any) -> str:
     return tel
 
 
-def cleanup_file(file_path: str) -> None:
-    """Remove arquivo temporário de forma segura"""
-    try:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            logger.info(f"Arquivo temporário removido: {file_path}")
-    except Exception as e:
-        logger.warning(f"Erro ao remover arquivo temporário {file_path}: {e}")
-        raise e
-
-
 # Mapeamento das rotas
 @app.route("/v1/webhook/whatsapp", methods=["POST"])
 def whatsapp_webhook():
@@ -69,23 +56,23 @@ def whatsapp_webhook():
         return jsonify({"error": "phone not found"}), 400
 
     phone_number = get_number(raw_jid)
-    msg_type: ACCEPTABLE_TYPES = payload["data"].get("messageType") or "conversation"
-    # if msg_type == 'audioMessage':
-    #     content = ContentItem(type=msg_type, )
+    msg_type: ACCEPTABLE_TYPES = payload["data"].get("messageType")
 
     # salva a mensagem crua na fila Redis (será desserializada pelo messageProcessor)
     try:
         redis_queue.add_message(phone_number, payload)
+        logger.info(f"Mensagem salva no Redis para {phone_number}")
     except Exception as e:
         logger.error(f"Erro ao salvar mensagem no Redis: {e}", exc_info=True)
         return jsonify({"error": "redis error"}), 500
 
-    # dispara o processamento em background (após BATCH_PROCESSING_DELAY dentro do processor)
+    # dispara o processamento em background
     try:
         thread = threading.Thread(
             target=async_processor, args=(msg_type, phone_number), daemon=True
         )
         thread.start()
+        logger.info(f"Processamento assíncrono iniciado para {phone_number}")
     except Exception as e:
         logger.error(f"Erro ao iniciar processamento assíncrono: {e}", exc_info=True)
         return jsonify({"error": "processing start failed"}), 500
@@ -145,4 +132,4 @@ def serve_static(filename: str):
 
 if __name__ == "__main__":
     # Garante que a pasta statix existe
-    app.run(host="0.0.0.0", port=80, debug=False)
+    app.run(host="0.0.0.0", port=8080, debug=False)

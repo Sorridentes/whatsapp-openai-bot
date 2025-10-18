@@ -12,7 +12,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 class MongoDB:
     def __init__(self) -> None:
         self.client: MongoClient[Any] = MongoClient(Config.MONGODB_URI)
-        self.db = self.client[Config.MONGODB_DB_NAME]
+        self.db = self.client[Config.MONGO_INITDB_DATABASE]
         self.conversations = self.db["conversations"]
         self.temp_conversation = self.db["media_cache"]
 

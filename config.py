@@ -21,7 +21,7 @@ class Config:
 
     # Configuração do MongoDB
     MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-    MONGODB_DB_NAME: str = os.getenv("MONGODB_DB_NAME", "whatsapp_bot")
+    MONGO_INITDB_DATABASE: str = os.getenv("MONGO_INITDB_DATABASE", "whatsapp_bot")
 
     # Configuração do Redis
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")

@@ -1,29 +1,26 @@
 import logging
 import asyncio
-from typing import Any, Literal, Optional, overload
+from typing import Any, Literal
 from database import redis_queue, mongo_db
 from whatsappMessage import WhatsappMessage
 from openaiIntegration import clientAI
 from evolutionIntegration import clientEvolution
 from message import Message
 from contentItem import ContentItem
-from openaiIntegration import clientAI
 from decrypt import decryptByLink
 from config import Config
 import base64
+import os
 
 logger: logging.Logger = logging.getLogger(__name__)
 ACCEPTABLE_TYPES_MESSAGE = Literal[
     "conversation", "audioMessage", "imageMessage", "documentMessage"
 ]
-ACCEPTABLE_TYPES_CONTENT = Literal[
-    "output_text", "input_text", "input_image", "input_file"
-]
 
 
 class MessageProcessor:
     def __init__(self) -> None:
-        self.message: Message = Message(role="user", content=[])
+        self.message: Message
         self.zap_message: WhatsappMessage
 
     async def process_phone_messages(
@@ -34,219 +31,286 @@ class MessageProcessor:
             # Aguarda o timeout para agrupar mensagens
             await asyncio.sleep(Config.BATCH_PROCESSING_DELAY)
 
-            # Recupera todas as mensagens pendentes
-            pending_content: list[ContentItem] = self._content_overflow(
-                redis_queue.get_pending_messages(phone_number)
-            )
-
-            if not pending_content:
+            # Recupera todas as mensagens brutas do Redis
+            raw_messages = redis_queue.get_pending_messages(phone_number)
+            if not raw_messages:
                 logger.info(f"Nenhuma mensagem pendente para {phone_number}")
-                pass
+                return
 
             logger.info(
-                f"Processando {len(pending_content)} mensagens em lote para {phone_number}"
+                f"Processando {len(raw_messages)} mensagens em lote para {phone_number}"
             )
 
-            self.message.content = pending_content
+            # Processa cada mensagem bruta e converte para ContentItems (SEM descriptografar ainda)
+            all_content_items: list[ContentItem] = []
+            for raw_msg in raw_messages:
+                try:
+                    processed_content = await self._process_single_message(raw_msg)
+                    all_content_items.extend(processed_content)
+                except Exception as e:
+                    logger.error(f"Erro ao processar mensagem individual: {e}")
+                    continue
+
+            if not all_content_items:
+                logger.warning(f"Nenhum conteúdo válido processado para {phone_number}")
+                return
+
+            # Cria a mensagem com todos os conteúdos (ainda criptografados)
+            self.message = Message(role="user", content=all_content_items)
+
+            # Salva no MongoDB APENAS com dados criptografados
             mongo_db.save(
                 phone_number=phone_number,
-                message_data=self.message.model_dump(exclude_none=True),
+                message_data=self.message.model_dump(exclude_none=True, mode="json"),
             )
 
-            self.zap_message = WhatsappMessage(
-                to_number=phone_number, message=self.message
-            )
-            try:
-                # Processa TODAS as mensagens juntas
-                await self._process_message_batch(phone_number)
-            except TypeError as e:
-                raise e
+            logger.info(f"Mensagem salva no MongoDB para {phone_number}")
+
+            # Processa o lote completo com OpenAI (aqui sim descriptografa)
+            await self._process_with_openai(phone_number)
 
         except Exception as e:
             logger.error(
-                f"Erro ao processar mensagens em lote para {phone_number}: {str(e)}"
+                f"Erro ao processar mensagens em lote para {phone_number}: {str(e)}",
+                exc_info=True,
             )
             raise e
 
-    def _content_overflow(
-        self, content_data: list[dict[str, Any]]
+    async def _process_single_message(
+        self, raw_message: dict[str, Any]
     ) -> list[ContentItem]:
-        logger.info(f"Transbondo dados para uma lista de ContentItem")
-        lst_content: list[ContentItem] = []
-        for content in content_data:
-            content_type: ACCEPTABLE_TYPES_CONTENT = content.get("type", "unknow")
-            item_content: ContentItem = ContentItem(
-                type=content_type,
-                media_key=(
-                    content["media_key"]
-                    if content_type in ("input_file", "input_image")
-                    else None
-                ),
+        """Processa uma única mensagem bruta do Redis e retorna ContentItems (criptografados)"""
+        content_items: list[ContentItem] = []
+
+        try:
+            # Extrai informações básicas da mensagem
+            msg_type = raw_message["data"].get("messageType", "conversation")
+            message_data = raw_message["data"].get("message", {})
+
+            logger.info(f"Processando mensagem do tipo: {msg_type}")
+
+            if msg_type == "conversation":
+                # Mensagem de texto simples
+                text = message_data.get("conversation", "")
+                if text.strip():
+                    content_items.append(ContentItem(type="input_text", text=text))
+                    logger.info(f"Texto processado: {text[:50]}...")
+
+            elif msg_type in ["audioMessage", "imageMessage", "documentMessage"]:
+                # Processa mensagens de mídia (mantém dados criptografados)
+                media_items = await self._process_encrypted_media(
+                    msg_type, message_data
+                )
+                content_items.extend(media_items)
+
+        except Exception as e:
+            logger.error(f"Erro no _process_single_message: {e}")
+            raise e
+
+        return content_items
+
+    async def _process_encrypted_media(
+        self, type: ACCEPTABLE_TYPES_MESSAGE, message_data: dict[str, Any]
+    ) -> list[ContentItem]:
+        """Processa mídias mantendo dados criptografados para salvar no MongoDB"""
+        content_items: list[ContentItem] = []
+
+        try:
+            # Obtém os dados específicos do tipo de mídia
+            media_key = type + "Message"
+            media_data = message_data.get(media_key, {})
+
+            encrypted_url = media_data.get("url")
+            media_key_b64 = media_data.get("mediaKey")
+            mimetype = media_data.get("mimetype")
+            caption = media_data.get("caption")
+
+            if not encrypted_url or not media_key_b64:
+                logger.warning(f"URL ou mediaKey não encontrados para {type}")
+                return content_items
+
+            # Determina o tipo de conteúdo
+            if type == "audioMessage":
+                content_type = "input_audio"
+            elif type == "imageMessage":
+                content_type = "input_image"
+            else:  # documentMessage
+                content_type = "input_file"
+
+            # Se houver caption, adiciona como texto separado
+            if caption and caption.strip():
+                content_items.append(ContentItem(type="input_text", text=caption))
+                logger.info(f"Caption processada: {caption[:50]}...")
+
+            # Adiciona o item de mídia com dados CRIPTOGRAFADOS
+            content_items.append(
+                ContentItem(
+                    type=content_type,
+                    url=encrypted_url,  # URL criptografada
+                    media_key=media_key_b64,  # Chave para descriptografar depois
+                    mimetype=mimetype,
+                    # NÃO inclui public_url aqui - será gerada apenas para OpenAI
+                )
             )
-            if content_type == "input_text":
-                item_content.text = content["text"]
-            else:
-                item_content.url = content["url"]
-            lst_content.append(item_content)
+            logger.info(f"Mídia {content_type} salva com dados criptografados")
 
-        return lst_content
+        except Exception as e:
+            logger.error(f"Erro no _process_encrypted_media: {e}")
+            raise e
 
-    async def _process_message_batch(self, phone_number: str):
-        """Processa um lote completo de mensagens e gera UMA resposta"""
+        return content_items
+
+    async def _process_with_openai(self, phone_number: str):
+        """Processa o histórico completo com a OpenAI (descriptografa apenas aqui)"""
         try:
             # Carrega histórico completo do MongoDB
-            try:
-                historical_messages = mongo_db.get_history(phone_number, limit=50)
-            except Exception as e:
-                raise e
-
-            # Prepara o histórico combinado (histórico + novas mensagens)
-            all_messages: list[dict[str, Any]] = []
-
-            # Processa o histórico (cada document do MongoDB tem uma lista 'content')
-            for hist_msg in historical_messages:
-                for content_dict in hist_msg.get("content", []):
-                    try:
-                        processed = await self._process_single_message_content(
-                            type=content_dict["type"], msg_data=content_dict
-                        )
-                        if processed:
-                            all_messages.extend(processed)
-                    except Exception as e:
-                        logger.warning(f"Falha ao processar item do histórico: {e}")
-                        continue
-
-            if not all_messages:
-                logger.warning(
-                    f"Nenhuma mensagem válida para processar para {phone_number}"
-                )
-
-            # Substitui o histórico pelo completo
-            self.zap_message.history_to_AI = all_messages
-
-            # Gera UMA resposta da OpenAI para todo o contexto
-            clientAI.create_response(self.zap_message)
-
-            # Envia UMA resposta via Evolution
-            clientEvolution.send_message(self.zap_message)
-
-            # Salva a mensagens no MongoDB
-            mongo_db.save(
-                phone_number, self.zap_message.message.model_dump(exclude_none=True)
+            historical_messages: list[dict[str, Any]] = mongo_db.get_history(
+                phone_number, limit=50
             )
 
-            logger.info(f"Processamento em lote concluído para {phone_number}")
+            # Prepara TODAS as mensagens para OpenAI (descriptografando mídias)
+            all_messages_for_ai: list[dict[str, Any]] = []
 
-        except Exception as e:
-            logger.error(f"Erro no processamento em lote: {str(e)}")
-            raise e
-
-    @overload
-    async def _process_single_message_content(
-        self, type: Literal["conversation"], msg_data: dict[str, Any]
-    ) -> list[dict[str, Any]]: ...
-
-    @overload
-    async def _process_single_message_content(
-        self, type: Literal["audioMessage"], msg_data: dict[str, Any]
-    ) -> list[dict[str, Any]]: ...
-
-    @overload
-    async def _process_single_message_content(
-        self, type: Literal["imageMessage"], msg_data: dict[str, Any]
-    ) -> list[dict[str, Any]]: ...
-
-    @overload
-    async def _process_single_message_content(
-        self, type: Literal["documentMessage"], msg_data: dict[str, Any]
-    ) -> list[dict[str, Any]]: ...
-
-    async def _process_single_message_content(
-        self, type: ACCEPTABLE_TYPES_MESSAGE, msg_data: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        """Processa o conteúdo de uma única mensagem (especialmente mídias)"""
-        logger.info(f"Tipo da messagem recebida: {type}")
-        lst_content: list[dict[str, Any]] = []
-        try:
-            message_data: Any = msg_data.get(type, "")
-            if type == "conversation":
-                # Mensagem de texto simples
-                lst_content.append(
-                    ContentItem(type="input_text", text=message_data).model_dump(
-                        exclude_none=True
+            for hist_msg in historical_messages:
+                try:
+                    # Prepara cada mensagem histórica para OpenAI
+                    prepared_msg = await self._prepare_historical_message_for_openai(
+                        hist_msg
                     )
-                )
-            else:
-                # Extrai informações da mídia
-                media_url: Optional[str] = message_data.get("url")
-                media_key: bytes = base64.b64decode(message_data.get("mediaKey", b""))
-                mimetype: Optional[str] = message_data.get("mimetype")
-                caption: Optional[str] = message_data.get("caption")
+                    if prepared_msg:
+                        all_messages_for_ai.append(prepared_msg)
+                except Exception as e:
+                    logger.warning(f"Erro ao preparar mensagem histórica: {e}")
+                    continue
 
-                if media_url and media_key:
-                    try:
-                        # Determina o tipo da mídia para o decrypt
-                        if type == "audioMessage":
-                            media_type = "audio"
-                        elif type == "imageMessage":
-                            if mimetype:
-                                media_type = mimetype
-                            else:
-                                media_type = "image"
-                        else:
-                            media_type = "document"
+            # Cria a mensagem do WhatsApp
+            self.zap_message = WhatsappMessage(
+                to_number=phone_number, message=self.message
+            )
 
-                        # Descriptografa e obtém URL pública
-                        try:
-                            public_url: str = decryptByLink(
-                                link=media_url, mediaKey=media_key, mediaType=media_type
-                            )
-                        except Exception as e:
-                            raise e
+            # Define o histórico completo para a AI (com mídias descriptografadas)
+            self.zap_message.history_to_AI = all_messages_for_ai
 
-                        logger.info(
-                            f"Mídia descriptografada e disponível em : {public_url}"
-                        )
-                        item: ContentItem
-                        itemCaption: ContentItem | None = None
-                        # Adiciona o item de conteúdo apropriado
-                        if type == "imageMessage":
-                            # Se houver caption, adiciona como texto também
-                            if caption:
-                                itemCaption = ContentItem(
-                                    type="input_text", text=caption
-                                )
-                            item = ContentItem(type="input_image", url=public_url)
-                        elif type == "audioMessage":
-                            # Transforma o audio em texto
-                            text_of_audio: str = clientAI.transcribe_audio(public_url)
-                            item = ContentItem(type="input_text", text=text_of_audio)
-                        elif type == "documentMessage":
-                            if caption:
-                                itemCaption = ContentItem(
-                                    type="input_text", text=caption
-                                )
+            logger.info(f"Enviando {len(all_messages_for_ai)} mensagens para OpenAI")
 
-                            item = ContentItem(type="input_file", url=public_url)
+            # Gera resposta da OpenAI
+            clientAI.create_response(self.zap_message)
 
-                        else:
-                            logger.warning("Tipo de mensagem não compativel")
-                            raise Exception("Tipo de mensagem não compativel")
+            # Envia resposta via Evolution
+            clientEvolution.send_message(self.zap_message)
 
-                        if itemCaption:
-                            lst_content.append(
-                                itemCaption.model_dump(exclude_none=True)
-                            )
-                        lst_content.append(item.model_dump(exclude_none=True))
-                    except Exception as e:
-                        logger.error(f"Erro ao processar mídia: {e}")
-                        raise e
-                raise Exception("Não foi enviado o midiaKey ou a url da mídia")
-            return lst_content
+            # Salva a resposta da assistant no MongoDB (apenas texto)
+            mongo_db.save(
+                phone_number,
+                self.zap_message.message.model_dump(exclude_none=True, mode="json"),
+            )
+
+            logger.info(f"Processamento OpenAI concluído para {phone_number}")
 
         except Exception as e:
-            logger.error(f"Erro geral no process_input: {e}")
+            logger.error(f"Erro no _process_with_openai: {str(e)}", exc_info=True)
             raise e
+
+    async def _prepare_historical_message_for_openai(
+        self, historical_msg: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Prepara uma mensagem histórica do MongoDB para a OpenAI"""
+        try:
+            # Cria uma cópia da mensagem
+            prepared_msg: Any = historical_msg.copy()
+
+            # Se a mensagem tem conteúdo, prepara cada item
+            if "content" in prepared_msg and isinstance(prepared_msg["content"], list):
+                prepared_content: list[dict[str, Any]] = []
+                for content_item in prepared_msg["content"]:
+                    # Se for mídia do MongoDB, descriptografa temporariamente
+                    if content_item.get("type") in [
+                        "input_audio",
+                        "input_image",
+                        "input_file",
+                    ]:
+                        if content_item.get("url") and content_item.get("media_key"):
+                            # Descriptografa para OpenAI
+                            openai_item = await self._decrypt_single_media_for_openai(
+                                content_item
+                            )
+                            if openai_item:
+                                prepared_content.append(openai_item)
+                        else:
+                            logger.warning("Item de mídia sem URL ou media_key")
+                    else:
+                        # Texto usa diretamente
+                        prepared_content.append(content_item)
+
+                prepared_msg["content"] = prepared_content
+
+            return prepared_msg
+
+        except Exception as e:
+            logger.error(f"Erro ao preparar mensagem histórica: {e}")
+            return historical_msg  # Retorna original em caso de erro
+
+    async def _decrypt_single_media_for_openai(
+        self, media_item: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Descriptografa um único item de mídia para OpenAI"""
+        try:
+            media_type_map: dict[str, Any] = {
+                "input_audio": "audio",
+                "input_image": media_item.get("mimetype") or "image",
+                "input_file": "document",
+            }
+
+            media_type = media_type_map.get(media_item["type"])
+            if not media_type:
+                logger.warning(f"Tipo de mídia não mapeado: {media_item['type']}")
+                return media_item
+
+            public_url = decryptByLink(
+                link=media_item["url"],
+                mediaKey=base64.b64decode(media_item["media_key"]),
+                mediaType=media_type,
+            )
+
+            # Agenda limpeza
+            self._schedule_file_cleanup(public_url)
+
+            # Retorna item com URL pública temporária
+            if media_type == "input_audio":
+                text_of_audio = clientAI.transcribe_audio(public_url)
+                openai_item = {"type": "input_text", "text": text_of_audio}
+            else:
+                openai_item: dict[str, Any] = {
+                    "type": media_item["type"],
+                    "url": public_url,
+                    "mimetype": media_item.get("mimetype"),
+                }
+            return openai_item
+
+        except Exception as e:
+            logger.error(f"Erro ao descriptografar mídia para OpenAI: {e}")
+            return media_item  # Retorna original em caso de erro
+
+    def _schedule_file_cleanup(self, file_path: str):
+        """Agenda limpeza do arquivo temporário após processamento"""
+        import threading
+        import time
+
+        def cleanup():
+            # Aguarda um tempo razoável para o processamento da OpenAI
+            time.sleep(30)  # 30 segundos deve ser suficiente
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"Arquivo temporário removido: {file_path}")
+                else:
+                    logger.warning(f"Arquivo temporário não encontrado: {file_path}")
+            except Exception as e:
+                logger.error(f"Erro ao remover arquivo temporário {file_path}: {e}")
+
+        # Executa a limpeza em thread separada
+        cleanup_thread = threading.Thread(target=cleanup, daemon=True)
+        cleanup_thread.start()
 
 
 # Instância global
