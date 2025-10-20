@@ -21,7 +21,6 @@ class OpenaiIntegration:
         try:
             # Prepara o input para a OpenAI baseado no histórico
             input_data: Any = zapMessage.history_to_AI
-            print(input_data)
 
             response: Any = self.client.responses.create(
                 prompt={

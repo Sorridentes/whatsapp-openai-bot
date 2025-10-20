@@ -59,9 +59,8 @@ class MongoDB:
                     },
                     "$setOnInsert": {
                         "created_at": datetime.now(timezone.utc),
-                        "expires_at": expires_at,  # Expiração do documento completo
                     },
-                    "set": {
+                    "$set": {
                         "update_at": datetime.now(timezone.utc),
                         "expires_at": expires_at,  # SEMPRE atuliza a expiração
                     },
@@ -191,27 +190,42 @@ class RedisQueue:
         """Adiciona mensagem à fila do Redis"""
         try:
             key = f"whatsapp:{id}"
-            self.redis.rpush(key, json.dumps(message_data, ensure_ascii=False))
+            message_json = json.dumps(message_data, ensure_ascii=False)
+            self.redis.rpush(key, message_json)
             self.redis.expire(key, self.timeout)
-            logger.debug(f"Mensagem adicionada à fila para {id}")
+            logger.info(f"Mensagem adicionada à fila para {id}, chave: {key}")  # DEBUG
+            logger.debug(f"Conteúdo da mensagem: {message_data}")  # DEBUG
         except Exception as e:
-            logger.error(f"Erro ao adicionar mensagem ao Redis: {str(e)}")
+            logger.error(
+                f"Erro ao adicionar mensagem ao Redis: {str(e)}", exc_info=True
+            )
             raise e
 
     def get_pending_messages(self, phone_number: str) -> list[dict[str, Any]]:
         """Recupera todas as mensagens pendentes e limpa a fila"""
         try:
             key: str = f"whatsapp:{phone_number}"
+            logger.info(f"Buscando mensagens com chave: {key}")  # DEBUG
+
+            # Verifica se a chave existe
+            if not self.redis.exists(key):
+                logger.info(f"Chave {key} não encontrada no Redis")
+                return []
+
             redis_messages: list[bytes] = self.redis.lrange(key, 0, -1)  # type: ignore
+            logger.info(
+                f"Encontradas {len(redis_messages)} mensagens no Redis"
+            )  # DEBUG
+
             self.redis.delete(key)
 
             result: list[dict[str, Any]] = []
             for msg_bytes in redis_messages:
                 try:
-                    # Decodifica bytes para string e depois para dict
                     msg_str = msg_bytes.decode("utf-8")
                     message_dict: dict[str, Any] = json.loads(msg_str)
                     result.append(message_dict)
+                    logger.debug(f"Mensagem decodificada: {message_dict}")  # DEBUG
                 except (json.JSONDecodeError, UnicodeDecodeError) as e:
                     logger.warning(f"Erro ao decodificar mensagem do Redis: {e}")
                     continue

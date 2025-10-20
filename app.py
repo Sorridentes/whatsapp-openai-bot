@@ -1,10 +1,13 @@
-from database import redis_queue
 from flask import Flask, request, jsonify
 from typing import Any, Literal
-from messageProcessor import message_processor
 import logging
+import atexit
 import asyncio
 import threading
+from config import Config
+from batch_processor import batch_processor
+from concurrent.futures import ThreadPoolExecutor
+from threadPoolExecutor import async_executor
 
 # Configurações do Flask e logging
 app = Flask(__name__)
@@ -21,14 +24,79 @@ ACCEPTABLE_TYPES = Literal[
 
 
 # Funções auxiliares
-def async_processor(type: ACCEPTABLE_TYPES, phone_number: str):
-    """Executa o processamento assíncrono em thread separada"""
+thread_executor = ThreadPoolExecutor(max_workers=10)
+
+
+def async_processor(phone_number: str, payload: dict[str, Any]):
+    """Envia mensagem para processamento assíncrono"""
+    try:
+        # Submete a tarefa ao executor customizado
+        async_executor.submit(process_message_async, phone_number, payload)
+
+        # Opcional: você pode aguardar o resultado se necessário
+        # future.result(timeout=30)
+
+        logger.info(f"Mensagem enviada para processamento: {phone_number}")
+
+    except Exception as e:
+        logger.error(f"Erro ao submeter mensagem para processamento: {e}")
+
+
+# Função assíncrona que será executada
+async def process_message_async(phone_number: str, payload: dict[str, Any]):
+    """Processa uma mensagem de forma assíncrona"""
+    try:
+        await batch_processor.add_message(phone_number, payload)
+        logger.info(f"Mensagem processada com sucesso: {phone_number}")
+    except Exception as e:
+        logger.error(f"Erro no processamento assíncrono para {phone_number}: {e}")
+        raise
+
+
+def graceful_shutdown():
+    """Shutdown graceful da aplicação"""
+    logger.info("Iniciando shutdown graceful...")
+    try:
+        # Usa thread para não bloquear
+        shutdown_thread = threading.Thread(target=shutdown_async, daemon=True)
+        shutdown_thread.start()
+        shutdown_thread.join(timeout=30)  # Espera até 30 segundos
+    except Exception as e:
+        logger.error(f"Erro durante shutdown graceful: {e}")
+
+
+def shutdown():
+    """Desliga o batch processor e o thread pool"""
+
+    thread = threading.Thread(target=shutdown_async, daemon=True)
+    thread.start()
+
+    return jsonify({"status": "shutting down"}), 202
+
+
+def shutdown_async():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(
-        message_processor.process_phone_messages(type, phone_number)
-    )
-    loop.close()
+
+    try:
+        # Shutdown do batch processor
+        loop.run_until_complete(batch_processor.shutdown())
+
+        # Shutdown do executor customizado
+        async_executor.shutdown(wait=True)
+        logger.info("AsyncThreadPoolExecutor shutdown completo")
+
+    except Exception as e:
+        logger.error(f"Erro durante shutdown: {e}")
+    finally:
+        if not loop.is_closed():
+            loop.close()
+
+
+@atexit.register
+def cleanup():
+    """Limpeza ao sair da aplicação"""
+    graceful_shutdown()
 
 
 def get_number(strTelefone: Any) -> str:
@@ -56,23 +124,19 @@ def whatsapp_webhook():
         return jsonify({"error": "phone not found"}), 400
 
     phone_number = get_number(raw_jid)
-    msg_type: ACCEPTABLE_TYPES = payload["data"].get("messageType")
 
-    # salva a mensagem crua na fila Redis (será desserializada pelo messageProcessor)
-    try:
-        redis_queue.add_message(phone_number, payload)
-        logger.info(f"Mensagem salva no Redis para {phone_number}")
-    except Exception as e:
-        logger.error(f"Erro ao salvar mensagem no Redis: {e}", exc_info=True)
-        return jsonify({"error": "redis error"}), 500
+    if not (
+        phone_number in Config.AUTHORIZED_NUMBERS
+        and not payload["data"]["key"]["fromMe"]
+    ):
+        logger.warning(f"Número não autorizado: {phone_number}")
+        return jsonify({"status": "skipped", "message": "Número não autorizado"}), 200
 
-    # dispara o processamento em background
     try:
-        thread = threading.Thread(
-            target=async_processor, args=(msg_type, phone_number), daemon=True
-        )
-        thread.start()
+        # Usa o executor customizado
+        async_processor(phone_number, payload)
         logger.info(f"Processamento assíncrono iniciado para {phone_number}")
+
     except Exception as e:
         logger.error(f"Erro ao iniciar processamento assíncrono: {e}", exc_info=True)
         return jsonify({"error": "processing start failed"}), 500

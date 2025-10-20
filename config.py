@@ -27,6 +27,9 @@ class Config:
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
     BATCH_PROCESSING_DELAY: int = int(os.getenv("BATCH_PROCESSING_DELAY", "3"))
 
+    # Autenticações
+    SHUTDOWN_API_KEY: str = os.getenv("SHUTDOWN_API_KEY", "123")
+
     # Números autorizados a usar o bot
     AUTHORIZED_NUMBERS: list[str] = (
         os.getenv("AUTHORIZED_NUMBERS", "").split(",")

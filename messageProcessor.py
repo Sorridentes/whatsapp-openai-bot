@@ -1,5 +1,4 @@
 import logging
-import asyncio
 from typing import Any, Literal
 from database import redis_queue, mongo_db
 from whatsappMessage import WhatsappMessage
@@ -8,7 +7,6 @@ from evolutionIntegration import clientEvolution
 from message import Message
 from contentItem import ContentItem
 from decrypt import decryptByLink
-from config import Config
 import base64
 import os
 
@@ -23,16 +21,17 @@ class MessageProcessor:
         self.message: Message
         self.zap_message: WhatsappMessage
 
-    async def process_phone_messages(
-        self, type: ACCEPTABLE_TYPES_MESSAGE, phone_number: str
-    ):
-        """Processa TODAS as mensagens pendentes de um telefone de uma vez"""
+    async def process_phone_messages(self, phone_number: str):
+        """Processa TODAS as mensagens pendentes de um telefone"""
         try:
-            # Aguarda o timeout para agrupar mensagens
-            await asyncio.sleep(Config.BATCH_PROCESSING_DELAY)
+            raw_messages: list[dict[str, Any]] = redis_queue.get_pending_messages(
+                phone_number
+            )
 
-            # Recupera todas as mensagens brutas do Redis
-            raw_messages = redis_queue.get_pending_messages(phone_number)
+            logger.info(
+                f"Mensagens recuperadas do Redis para {phone_number}: {len(raw_messages)}"
+            )
+
             if not raw_messages:
                 logger.info(f"Nenhuma mensagem pendente para {phone_number}")
                 return
@@ -41,7 +40,7 @@ class MessageProcessor:
                 f"Processando {len(raw_messages)} mensagens em lote para {phone_number}"
             )
 
-            # Processa cada mensagem bruta e converte para ContentItems (SEM descriptografar ainda)
+            # Processa cada mensagem bruta e converte para ContentItems
             all_content_items: list[ContentItem] = []
             for raw_msg in raw_messages:
                 try:
@@ -117,8 +116,7 @@ class MessageProcessor:
 
         try:
             # Obtém os dados específicos do tipo de mídia
-            media_key = type + "Message"
-            media_data = message_data.get(media_key, {})
+            media_data = message_data.get(type, {})
 
             encrypted_url = media_data.get("url")
             media_key_b64 = media_data.get("mediaKey")
@@ -276,10 +274,12 @@ class MessageProcessor:
             self._schedule_file_cleanup(public_url)
 
             # Retorna item com URL pública temporária
-            if media_type == "input_audio":
-                text_of_audio = clientAI.transcribe_audio(public_url)
+            if media_item["type"] == "input_audio":
+                file_path = f"./static/{public_url.split('/')[-1]}"
+                text_of_audio = clientAI.transcribe_audio(file_path)
                 openai_item = {"type": "input_text", "text": text_of_audio}
             else:
+                print(media_item["type"])
                 openai_item: dict[str, Any] = {
                     "type": media_item["type"],
                     "url": public_url,
@@ -291,14 +291,15 @@ class MessageProcessor:
             logger.error(f"Erro ao descriptografar mídia para OpenAI: {e}")
             return media_item  # Retorna original em caso de erro
 
-    def _schedule_file_cleanup(self, file_path: str):
+    def _schedule_file_cleanup(self, file_path_network: str):
         """Agenda limpeza do arquivo temporário após processamento"""
         import threading
         import time
 
         def cleanup():
             # Aguarda um tempo razoável para o processamento da OpenAI
-            time.sleep(30)  # 30 segundos deve ser suficiente
+            time.sleep(10)  # 10 segundos deve ser suficiente
+            file_path = "./static/" + file_path_network.split("/")[-1]
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
