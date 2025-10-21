@@ -27,6 +27,13 @@ class Config:
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
     BATCH_PROCESSING_DELAY: int = int(os.getenv("BATCH_PROCESSING_DELAY", "3"))
 
+    # Configuração do Supabase
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+
+    # Escolha do banco de dados (MongoDB ou Supabase)
+    USE_SUPABASE: bool = os.getenv("USE_SUPABASE", "false").lower() == "true"
+
     # Números autorizados a usar o bot
     AUTHORIZED_NUMBERS: list[str] = (
         os.getenv("AUTHORIZED_NUMBERS", "").split(",")
