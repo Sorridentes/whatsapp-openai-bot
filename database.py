@@ -14,7 +14,6 @@ class MongoDB:
         self.client: MongoClient[Any] = MongoClient(Config.MONGODB_URI)
         self.db = self.client[Config.MONGO_INITDB_DATABASE]
         self.conversations = self.db["conversations"]
-        self.temp_conversation = self.db["media_cache"]
 
         # Índices para otimizar as consultas de expiração
         self._create_indexes()
@@ -24,9 +23,6 @@ class MongoDB:
         try:
             # Índice para expiração de conversas
             self.conversations.create_index([("phone_number", 1), ("expires_at", 1)])
-
-            # Índice para expiração de mídias
-            self.temp_conversation.create_index([("expires_at", 1)])
 
             # Índice para busca por telefone
             self.conversations.create_index([("phone_number", 1)])
@@ -43,7 +39,7 @@ class MongoDB:
         db_type: Literal["conversation", "temp_conversation"] = "conversation",
     ) -> None:
         """Salva uma mensagem no histórico da conversa com expiração de 1 dia"""
-        db = self.conversations if db_type == "conversation" else self.temp_conversation
+        db = self.conversations
         try:
             # Data de expiração: 1 dia a partir de agora
             expires_at = datetime.now(timezone.utc) + timedelta(days=1)
@@ -79,7 +75,7 @@ class MongoDB:
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         """Recupera o histórico de conversa, filtrando mensagens expiradas"""
-        db = self.conversations if db_type == "conversation" else self.temp_conversation
+        db = self.conversations
         try:
             # Busca a conversa do telefone
             result = db.find_one(

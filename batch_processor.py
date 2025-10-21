@@ -73,7 +73,8 @@ class GlobalBatchProcessor:
 
     async def _monitor_batches(self):
         """Monitora continuamente os batches prontos para processamento"""
-        logger.info(f"--- Monitoramento de batch iniciado")
+        if not self._shutting_down:
+            logger.info(f"--- Monitoramento de batch iniciado")
 
         while not self._shutting_down:
             try:
@@ -144,6 +145,17 @@ class GlobalBatchProcessor:
 
         except Exception as e:
             logger.error(f"Erro ao processar batch agendado para {phone_number}: {e}")
+
+    async def stop_monitoring(self):
+        """Para o monitoramento gracefuly"""
+        self._shutting_down = True
+        if self._batch_monitor_task and not self._batch_monitor_task.done():
+            self._batch_monitor_task.cancel()
+            try:
+                await self._batch_monitor_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Monitor de batches parado")
 
 
 # Instância global
