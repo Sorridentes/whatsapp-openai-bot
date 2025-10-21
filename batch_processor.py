@@ -1,6 +1,7 @@
 # batch_processor.py
 import asyncio
 import logging
+import time
 from typing import Dict, Any
 from database import redis_queue
 from messageProcessor import MessageProcessor
@@ -11,141 +12,138 @@ logger = logging.getLogger(__name__)
 
 class GlobalBatchProcessor:
     def __init__(self):
-        self.queues: Dict[str, asyncio.Queue[Any]] = {}
         self.processing_tasks: Dict[str, asyncio.Task[Any]] = {}
         self.batch_timeout = Config.BATCH_PROCESSING_DELAY
         self.message_processor = MessageProcessor()
         self._shutting_down = False
+        self._batch_monitor_task: asyncio.Task[Any] | None = None
+
+    async def start_monitoring(self):
+        """Inicia o monitoramento contínuo dos batches"""
+        self._batch_monitor_task = asyncio.create_task(self._monitor_batches())
 
     async def add_message(self, phone_number: str, message_data: dict[str, Any]):
-        """Adiciona mensagem à fila do telefone"""
+        """Adiciona mensagem ao Redis e agenda processamento"""
         if self._shutting_down:
             return
 
-        if phone_number not in self.queues:
-            self.queues[phone_number] = asyncio.Queue()
-            # Inicia task de processamento para este telefone
-            self.processing_tasks[phone_number] = asyncio.create_task(
-                self._process_batch_for_phone(phone_number),
-                name=f"batch_processor_{phone_number}",
-            )
-            logger.info(f"Iniciado batch processor para {phone_number}")
-
-        await self.queues[phone_number].put(message_data)
-        logger.info(f"Mensagem adicionada à fila de {phone_number}")
-
-    async def _process_batch_for_phone(self, phone_number: str):
-        queue = self.queues[phone_number]
-
         try:
-            while not self._shutting_down:
-                batch: list[dict[str, Any]] = []
+            # Adiciona a mensagem ao Redis (método existente)
+            redis_queue.add_message(phone_number, message_data)
 
-                try:
-                    # Coleta a PRIMEIRA mensagem
-                    first_message = await queue.get()
-                    batch.append(first_message)
+            # Agenda o processamento deste telefone
+            await self._schedule_batch_processing(phone_number)
 
-                    # Loop que reseta o timer a cada nova mensagem
-                    while True:
-                        try:
-                            # Espera por novas mensagens por até batch_timeout segundos
-                            # Se chegar mensagem, reseta o timer. Se timeout, processa.
-                            additional_msg = await asyncio.wait_for(
-                                queue.get(), timeout=self.batch_timeout
-                            )
-                            batch.append(additional_msg)
-                            logger.info(
-                                f"Mensagem adicional adicionada ao lote para {phone_number} - timer resetado"
-                            )
-                            # TIMER RESETADO - volta a esperar batch_timeout segundos
+            logger.info(f"Mensagem adicionada e agendada para {phone_number}")
 
-                        except asyncio.TimeoutError:
-                            # Não chegou nova mensagem por batch_timeout segundos - PROCESSAR
-                            break
+        except Exception as e:
+            logger.error(f"Erro ao adicionar mensagem para {phone_number}: {e}")
+            raise
 
-                    # Processa o lote completo após período de inatividade
-                    if batch:
-                        logger.info(
-                            f"Processando lote de {len(batch)} mensagens para {phone_number} (5s sem novas mensagens)"
+    async def _schedule_batch_processing(self, phone_number: str):
+        """Agenda o processamento do batch para este telefone"""
+        try:
+            # Define um timestamp de expiração no Redis
+            processing_key = f"batch_processing:{phone_number}"
+            expiry_time = time.time() + self.batch_timeout
+
+            logger.info(f"AGENDANDO: {phone_number} -> expira em {self.batch_timeout}")
+
+            # Usa SET com NX para evitar agendamentos duplicados
+            scheduled = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: redis_queue.redis.setnx(processing_key, str(expiry_time))
+            )
+
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: redis_queue.redis.expireat(
+                    processing_key, int(time.time() + 60)
+                ),
+            )
+
+            if scheduled:
+                logger.info(
+                    f"Batch agendado para {phone_number} em {self.batch_timeout}s"
+                )
+            else:
+                logger.info(f"Expiração do batch atualizado para {phone_number}")
+
+        except Exception as e:
+            logger.error(f"Erro ao agendar batch para {phone_number}: {e}")
+
+    async def _monitor_batches(self):
+        """Monitora continuamente os batches prontos para processamento"""
+        logger.info(f"--- Monitoramento de batch iniciado")
+
+        while not self._shutting_down:
+            try:
+                # Encontra batches que expiraram (devem ser processados)
+                current_time = time.time()
+                batch_keys: list[
+                    bytes
+                ] = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: redis_queue.redis.keys("batch_processing:*"),  # type: ignore
+                )
+
+                if batch_keys:
+                    logger.debug(
+                        f"Monitor: encontradas {len(batch_keys)} chaves de batch"
+                    )
+
+                for key in batch_keys:
+                    try:
+                        # Verifica se o batch expirou
+                        expiry_str: (
+                            Any
+                        ) = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: redis_queue.redis.get(key)
                         )
-                        await self._process_batch(phone_number, batch)
 
-                except asyncio.CancelledError:
-                    logger.info(f"Batch processor para {phone_number} cancelado")
-                    if batch:
-                        await self._process_batch(phone_number, batch)
-                    break
-                except Exception as e:
-                    logger.error(f"Erro no batch processor para {phone_number}: {e}")
-                    await asyncio.sleep(1)
+                        if expiry_str and float(expiry_str) <= current_time:
+                            # Remove a chave e processa o batch
+                            phone_number = key.decode().split(":")[1]
 
-        except Exception as e:
-            logger.error(f"Erro crítico no batch processor para {phone_number}: {e}")
-        finally:
-            await self._cleanup_phone(phone_number)
+                            removed = await asyncio.get_event_loop().run_in_executor(
+                                None, lambda: redis_queue.redis.delete(key)
+                            )
 
-    async def _process_batch(self, phone_number: str, batch: list[dict[str, Any]]):
-        """Processa um lote de mensagens usando o MessageProcessor existente"""
+                            if removed:
+                                await self._process_scheduled_batch(phone_number)
+
+                    except Exception as e:
+                        logger.error(f"Erro ao processar batch key {key}: {e}")
+                        continue
+
+                # Espera um curto período antes da próxima verificação
+                await asyncio.sleep(0.1)  # 100ms
+
+            except Exception as e:
+                logger.error(f"Erro no monitor de batches: {e}")
+                await asyncio.sleep(1)
+
+    async def _process_scheduled_batch(self, phone_number: str):
+        """Processa um batch agendado"""
         try:
-            logger.info(
-                f"Processando lote de {len(batch)} mensagens para {phone_number}"
+            # Verifica se há mensagens pendentes
+            pending_count: int | Any = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: redis_queue.redis.llen(f"whatsapp:{phone_number}")
             )
 
-            # Salva todas as mensagens no Redis primeiro
-            for message_data in batch:
-                redis_queue.add_message(phone_number, message_data)
+            if pending_count > 0:
+                logger.info(
+                    f"Processando batch agendado para {phone_number} com {pending_count} mensagens"
+                )
 
-            # Chama o método original do MessageProcessor
-            await self.message_processor.process_phone_messages(phone_number)
+                # Usa o MessageProcessor existente para processar
+                await self.message_processor.process_phone_messages(phone_number)
 
-            logger.info(f"Lote processado com sucesso para {phone_number}")
-
-        except Exception as e:
-            logger.error(f"Erro ao processar lote para {phone_number}: {e}")
-
-    async def _cleanup_phone(self, phone_number: str):
-        """Limpa recursos para um telefone"""
-        try:
-            if phone_number in self.queues:
-                # Processa mensagens restantes na queue
-                queue = self.queues[phone_number]
-                remaining_messages: list[dict[str, Any]] = []
-                while not queue.empty():
-                    try:
-                        msg = queue.get_nowait()
-                        remaining_messages.append(msg)
-                    except asyncio.QueueEmpty:
-                        break
-
-                if remaining_messages:
-                    await self._process_batch(phone_number, remaining_messages)
-
-                del self.queues[phone_number]
-
-            if phone_number in self.processing_tasks:
-                task = self.processing_tasks[phone_number]
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-                del self.processing_tasks[phone_number]
+                logger.info(f"Batch processado com sucesso para {phone_number}")
+            else:
+                logger.info(f"Nenhuma mensagem pendente para {phone_number}")
 
         except Exception as e:
-            logger.error(f"Erro no cleanup para {phone_number}: {e}")
-
-    async def shutdown(self):
-        """Desliga o batch processor gracefuly"""
-        self._shutting_down = True
-        logger.info("Iniciando shutdown do GlobalBatchProcessor...")
-
-        # Para todas as tasks
-        for phone_number in list(self.processing_tasks.keys()):
-            await self._cleanup_phone(phone_number)
-
-        logger.info("GlobalBatchProcessor shutdown completo")
+            logger.error(f"Erro ao processar batch agendado para {phone_number}: {e}")
 
 
 # Instância global

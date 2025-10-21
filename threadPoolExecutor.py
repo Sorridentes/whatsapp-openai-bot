@@ -67,33 +67,6 @@ class AsyncThreadPoolExecutor:
 
         return self.executor.submit(run_with_loop)
 
-    def shutdown(self, wait: bool = True):
-        """Desliga o executor gracefuly"""
-        logger.info("Desligando AsyncThreadPoolExecutor...")
-
-        with self.lock:
-            for thread_name, loop in self.thread_loops.items():
-                try:
-                    if not loop.is_closed():
-                        # Tenta finalizar tasks pendentes
-                        pending = asyncio.all_tasks(loop)
-                        if pending:
-                            logger.info(
-                                f"Cancelando {len(pending)} tasks pendentes em {thread_name}"
-                            )
-                            for task in pending:
-                                task.cancel()
-
-                        # Fecha o loop
-                        loop.close()
-                        logger.info(f"Loop fechado para thread: {thread_name}")
-                except Exception as e:
-                    logger.error(f"Erro ao fechar loop para {thread_name}: {e}")
-
-            self.thread_loops.clear()
-
-        self.executor.shutdown(wait=wait)
-
 
 # Instância global do executor customizado
 async_executor = AsyncThreadPoolExecutor(max_workers=10)

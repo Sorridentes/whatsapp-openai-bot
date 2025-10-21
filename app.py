@@ -1,13 +1,13 @@
 from flask import Flask, request, jsonify
 from typing import Any, Literal
 import logging
-import atexit
 import asyncio
 import threading
 from config import Config
 from batch_processor import batch_processor
 from concurrent.futures import ThreadPoolExecutor
 from threadPoolExecutor import async_executor
+import sys
 
 # Configurações do Flask e logging
 app = Flask(__name__)
@@ -15,6 +15,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt=r"%d-%m-%Y %H:%M:%S",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("app_debug.log"),  # SALVA EM ARQUIVO TAMBÉM
+    ],
 )
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -25,6 +29,18 @@ ACCEPTABLE_TYPES = Literal[
 
 # Funções auxiliares
 thread_executor = ThreadPoolExecutor(max_workers=10)
+
+
+def initialize_batch_monitor():
+    """Inicializa o monitor de batches em thread separada"""
+    logger.info("INICIANDO MONITOR DE BATCHES...")
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(batch_processor.start_monitoring())
+        logger.info("MONITOR INICIADO COM SUCESSO")
+    except Exception as e:
+        logger.error(f"FALHA AO INICIAR MONITOR: {e}")
 
 
 def async_processor(phone_number: str, payload: dict[str, Any]):
@@ -51,52 +67,6 @@ async def process_message_async(phone_number: str, payload: dict[str, Any]):
     except Exception as e:
         logger.error(f"Erro no processamento assíncrono para {phone_number}: {e}")
         raise
-
-
-def graceful_shutdown():
-    """Shutdown graceful da aplicação"""
-    logger.info("Iniciando shutdown graceful...")
-    try:
-        # Usa thread para não bloquear
-        shutdown_thread = threading.Thread(target=shutdown_async, daemon=True)
-        shutdown_thread.start()
-        shutdown_thread.join(timeout=30)  # Espera até 30 segundos
-    except Exception as e:
-        logger.error(f"Erro durante shutdown graceful: {e}")
-
-
-def shutdown():
-    """Desliga o batch processor e o thread pool"""
-
-    thread = threading.Thread(target=shutdown_async, daemon=True)
-    thread.start()
-
-    return jsonify({"status": "shutting down"}), 202
-
-
-def shutdown_async():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    try:
-        # Shutdown do batch processor
-        loop.run_until_complete(batch_processor.shutdown())
-
-        # Shutdown do executor customizado
-        async_executor.shutdown(wait=True)
-        logger.info("AsyncThreadPoolExecutor shutdown completo")
-
-    except Exception as e:
-        logger.error(f"Erro durante shutdown: {e}")
-    finally:
-        if not loop.is_closed():
-            loop.close()
-
-
-@atexit.register
-def cleanup():
-    """Limpeza ao sair da aplicação"""
-    graceful_shutdown()
 
 
 def get_number(strTelefone: Any) -> str:
@@ -189,11 +159,15 @@ def home():
 
 
 # Rota para servir arquivos estáticos (necessário para o ngrok)
-@app.route("/stattic/<path:filename>")
+@app.route("/static/<path:filename>")
 def serve_static(filename: str):
     return app.send_static_file(filename)
 
 
 if __name__ == "__main__":
-    # Garante que a pasta statix existe
+    # Inicia o monitor imediatamente
+    monitor_thread = threading.Thread(target=initialize_batch_monitor, daemon=True)
+    monitor_thread.start()
+
+    # Garante que a pasta static existe
     app.run(host="0.0.0.0", port=8080, debug=False)

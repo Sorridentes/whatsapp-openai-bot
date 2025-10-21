@@ -109,82 +109,10 @@ class MongoDB:
             logger.error(f"Erro ao recuperar histórico: {str(e)}")
             raise e
 
-    def delete_temp_conversation(self, phone_number: str) -> None:
-        """Remove a referencia do temporaria"""
-        try:
-            self.temp_conversation.delete_one({"phone_number": phone_number})
-            logger.info(f"Referência do telefone {phone_number} removida")
-        except Exception as e:
-            logger.error(f"Erro ao remover referência do telefono: {str(e)}")
-            raise e
-
-    def cleanup_expired_data(self) -> dict[str, int]:
-        """
-        Remove todos os dados expirados do banco
-        Retorna estatísticas do que foi limpo
-        """
-        try:
-            current_time = datetime.now(timezone.utc)
-            cleanup_stats: dict[str, int] = {}
-
-            # 1. Limpa conversas expiradas (documentos completos)
-            conversations_result = self.conversations.delete_many(
-                {"expires_at": {"$lt": current_time}}
-            )
-            cleanup_stats["conversations_deleted"] = conversations_result.deleted_count
-
-            # 2. Limpa mídias expiradas
-            media_result = self.temp_conversation.delete_many(
-                {"expires_at": {"$lt": current_time}}
-            )
-            cleanup_stats["media_references_deleted"] = media_result.deleted_count
-
-            logger.info(f"Limpeza concluída: {cleanup_stats}")
-            return cleanup_stats
-
-        except Exception as e:
-            logger.error(f"Erro durante limpeza de dados expirados: {str(e)}")
-            raise e
-
-    def extend_conversation_expiration(
-        self, phone_number: str, additional_days: int = 1
-    ) -> bool:
-        """Estende a expiração de uma conversa específica"""
-        try:
-            new_expires_at = datetime.now(timezone.utc) + timedelta(
-                days=additional_days
-            )
-
-            result = self.conversations.update_one(
-                {"phone_number": phone_number},
-                {
-                    "$set": {
-                        "expires_at": new_expires_at,
-                        "updated_at": datetime.now(timezone.utc),
-                    }
-                },
-            )
-
-            if result.modified_count > 0:
-                logger.info(
-                    f"Expiração estendida para {phone_number} até {new_expires_at}"
-                )
-                return True
-            else:
-                logger.warning(
-                    f"Conversa não encontrada para estender expiração: {phone_number}"
-                )
-                return False
-
-        except Exception as e:
-            logger.error(f"Erro ao estender expiração: {str(e)}")
-            return False
-
 
 class RedisQueue:
     def __init__(self):
         self.redis: Redis = Redis.from_url(Config.REDIS_URL)  # type: ignore[arg-type]
-        self.timeout: int = Config.BATCH_PROCESSING_DELAY
 
     def add_message(self, id: str, message_data: dict[str, Any]) -> None:
         """Adiciona mensagem à fila do Redis"""
@@ -192,7 +120,10 @@ class RedisQueue:
             key = f"whatsapp:{id}"
             message_json = json.dumps(message_data, ensure_ascii=False)
             self.redis.rpush(key, message_json)
-            self.redis.expire(key, self.timeout)
+
+            # Define expiração para a fila de mensagens (batch processing)
+            self.redis.expire(key, 60)
+
             logger.info(f"Mensagem adicionada à fila para {id}, chave: {key}")  # DEBUG
             logger.debug(f"Conteúdo da mensagem: {message_data}")  # DEBUG
         except Exception as e:
