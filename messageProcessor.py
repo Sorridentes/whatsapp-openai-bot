@@ -137,6 +137,18 @@ class MessageProcessor:
             if caption and caption.strip():
                 content_items.append(ContentItem(type="input_text", text=caption))
                 logger.info(f"Caption processada: {caption[:50]}...")
+            if not caption and type in ("imageMessage", "documentMessage"):
+                content_items.append(
+                    ContentItem(
+                        type="input_text",
+                        text=(
+                            "Analise esta imagem"
+                            if type == "imageMessage"
+                            else "Analise este documento"
+                        ),
+                    )
+                )
+                logger.info(f"Caption padrão gerado")
 
             # Adiciona o item de mídia com dados CRIPTOGRAFADOS
             content_items.append(
@@ -145,7 +157,6 @@ class MessageProcessor:
                     url=encrypted_url,  # URL criptografada
                     media_key=media_key_b64,  # Chave para descriptografar depois
                     mimetype=mimetype,
-                    # NÃO inclui public_url aqui - será gerada apenas para OpenAI
                 )
             )
             logger.info(f"Mídia {content_type} salva com dados criptografados")
