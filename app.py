@@ -100,6 +100,10 @@ def whatsapp_webhook():
         logger.warning("Não foi possível extrair número do payload")
         return jsonify({"error": "phone not found"}), 400
 
+    if not "s.whatsapp.net" in raw_jid:
+        logger.warning("Messagem não vem do privado")
+        return jsonify({"status": "skipped", "message": "Número não é do privado"}), 200
+
     phone_number = get_number(raw_jid)
 
     if not (
