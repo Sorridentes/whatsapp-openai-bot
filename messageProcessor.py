@@ -63,8 +63,6 @@ class MessageProcessor:
                 message_data=self.message.model_dump(exclude_none=True, mode="json"),
             )
 
-            logger.info(f"Mensagem salva no MongoDB para {phone_number}")
-
             # Processa o lote completo com OpenAI (aqui sim descriptografa)
             await self._process_with_openai(phone_number)
 
@@ -279,7 +277,6 @@ class MessageProcessor:
                 text_of_audio = clientAI.transcribe_audio(file_path)
                 openai_item = {"type": "input_text", "text": text_of_audio}
             else:
-                print(media_item["type"])
                 openai_item: dict[str, Any] = {
                     "type": media_item["type"],
                     "url": public_url,
