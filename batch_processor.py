@@ -51,7 +51,7 @@ class GlobalBatchProcessor:
 
             # Usa SET com NX para evitar agendamentos duplicados
             scheduled = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: redis_queue.redis.setnx(processing_key, str(expiry_time))
+                None, lambda: redis_queue.redis.set(processing_key, str(expiry_time))
             )
 
             await asyncio.get_event_loop().run_in_executor(
