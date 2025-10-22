@@ -63,8 +63,6 @@ class MessageProcessor:
                 message_data=self.message.model_dump(exclude_none=True, mode="json"),
             )
 
-            logger.info(f"Mensagem salva no MongoDB para {phone_number}")
-
             # Processa o lote completo com OpenAI (aqui sim descriptografa)
             await self._process_with_openai(phone_number)
 
@@ -139,6 +137,18 @@ class MessageProcessor:
             if caption and caption.strip():
                 content_items.append(ContentItem(type="input_text", text=caption))
                 logger.info(f"Caption processada: {caption[:50]}...")
+            if not caption and type in ("imageMessage", "documentMessage"):
+                content_items.append(
+                    ContentItem(
+                        type="input_text",
+                        text=(
+                            "Analise esta imagem"
+                            if type == "imageMessage"
+                            else "Analise este documento"
+                        ),
+                    )
+                )
+                logger.info(f"Caption padrão gerado")
 
             # Adiciona o item de mídia com dados CRIPTOGRAFADOS
             content_items.append(
@@ -147,7 +157,6 @@ class MessageProcessor:
                     url=encrypted_url,  # URL criptografada
                     media_key=media_key_b64,  # Chave para descriptografar depois
                     mimetype=mimetype,
-                    # NÃO inclui public_url aqui - será gerada apenas para OpenAI
                 )
             )
             logger.info(f"Mídia {content_type} salva com dados criptografados")
@@ -279,12 +288,15 @@ class MessageProcessor:
                 text_of_audio = clientAI.transcribe_audio(file_path)
                 openai_item = {"type": "input_text", "text": text_of_audio}
             else:
-                print(media_item["type"])
                 openai_item: dict[str, Any] = {
                     "type": media_item["type"],
-                    "url": public_url,
-                    "mimetype": media_item.get("mimetype"),
+                    (
+                        "image_url"
+                        if media_item["type"] == "input_image"
+                        else "file_url"
+                    ): public_url,
                 }
+
             return openai_item
 
         except Exception as e:
