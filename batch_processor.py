@@ -117,7 +117,7 @@ class GlobalBatchProcessor:
                         continue
 
                 # Espera um curto período antes da próxima verificação
-                await asyncio.sleep(0.1)  # 100ms
+                await asyncio.sleep(1)  # 1s
 
             except Exception as e:
                 logger.error(f"Erro no monitor de batches: {e}")

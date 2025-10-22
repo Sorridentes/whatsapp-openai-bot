@@ -279,9 +279,13 @@ class MessageProcessor:
             else:
                 openai_item: dict[str, Any] = {
                     "type": media_item["type"],
-                    "url": public_url,
-                    "mimetype": media_item.get("mimetype"),
+                    (
+                        "image_url"
+                        if media_item["type"] == "input_image"
+                        else "file_url"
+                    ): public_url,
                 }
+
             return openai_item
 
         except Exception as e:
