@@ -1,6 +1,6 @@
 from typing import List, Optional, Literal
 from pydantic import BaseModel, model_validator
-from contentItem import ContentItem
+from .contentItem import ContentItem
 import logging
 
 logger: logging.Logger = logging.getLogger(__name__)

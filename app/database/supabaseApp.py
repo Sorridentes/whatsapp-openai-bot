@@ -1,4 +1,4 @@
-from config import Config
+from app.core.config import Config
 from supabase import create_client
 import supabase
 import logging
@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class SupabaseDatabase:
+class Supabase:
     def __init__(self) -> None:
         self.client: supabase.Client | None = None
         self.conversations_table = "conversations"

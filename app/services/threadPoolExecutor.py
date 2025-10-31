@@ -66,7 +66,3 @@ class AsyncThreadPoolExecutor:
                 raise
 
         return self.executor.submit(run_with_loop)
-
-
-# Instância global do executor customizado
-async_executor = AsyncThreadPoolExecutor(max_workers=10)

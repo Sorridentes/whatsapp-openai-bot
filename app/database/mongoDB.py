@@ -1,5 +1,5 @@
 from pymongo import MongoClient
-from config import Config
+from app.core.config import Config
 import logging
 from typing import Any
 from datetime import datetime, timedelta, timezone

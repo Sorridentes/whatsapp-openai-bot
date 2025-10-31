@@ -1,10 +1,11 @@
 from typing import Any
-from config import Config
 from openai import OpenAI
 import logging
-from contentItem import ContentItem
-from message import Message
-from whatsappMessage import WhatsappMessage
+
+from app.core.config import Config
+from app.models.contentItem import ContentItem
+from app.models.message import Message
+from app.models.whatsappMessage import WhatsappMessage
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -65,7 +66,3 @@ class OpenaiIntegration:
         except Exception as e:
             logger.error(f"Erro na transcrição OpenAI: {str(e)}")
             raise e
-
-
-# Instâncias globais
-clientAI: OpenaiIntegration = OpenaiIntegration()

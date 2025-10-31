@@ -3,9 +3,10 @@ import asyncio
 import logging
 import time
 from typing import Dict, Any
-from database import redis_queue
-from messageProcessor import MessageProcessor
-from config import Config
+
+from app.core.config import Config
+from .messageProcessor import MessageProcessor
+from app.database import redis_queue
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,3 @@ class GlobalBatchProcessor:
             except asyncio.CancelledError:
                 pass
         logger.info("Monitor de batches parado")
-
-
-# Instância global
-batch_processor = GlobalBatchProcessor()
