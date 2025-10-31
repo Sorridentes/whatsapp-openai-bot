@@ -3,9 +3,10 @@ import asyncio
 import logging
 import time
 from typing import Dict, Any
-from database import redis_queue
-from messageProcessor import MessageProcessor
-from config import Config
+
+from app.core.config import Config
+from .messageProcessor import MessageProcessor
+from app.database import redis_queue
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class GlobalBatchProcessor:
 
             # Usa SET com NX para evitar agendamentos duplicados
             scheduled = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: redis_queue.redis.setnx(processing_key, str(expiry_time))
+                None, lambda: redis_queue.redis.set(processing_key, str(expiry_time))
             )
 
             await asyncio.get_event_loop().run_in_executor(
@@ -117,7 +118,7 @@ class GlobalBatchProcessor:
                         continue
 
                 # Espera um curto período antes da próxima verificação
-                await asyncio.sleep(0.1)  # 100ms
+                await asyncio.sleep(1)  # 1s
 
             except Exception as e:
                 logger.error(f"Erro no monitor de batches: {e}")
@@ -156,7 +157,3 @@ class GlobalBatchProcessor:
             except asyncio.CancelledError:
                 pass
         logger.info("Monitor de batches parado")
-
-
-# Instância global
-batch_processor = GlobalBatchProcessor()

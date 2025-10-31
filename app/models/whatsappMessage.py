@@ -1,4 +1,4 @@
-from message import Message
+from .message import Message
 from pydantic import BaseModel
 from typing import Any
 import logging

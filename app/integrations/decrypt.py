@@ -1,7 +1,6 @@
 from Crypto.Cipher import AES
 from Crypto.Cipher._mode_cbc import CbcMode
 from typing import Optional
-from config import Config
 import logging
 import hashlib
 import hmac
@@ -9,6 +8,8 @@ import base64
 import requests
 import os
 import uuid
+
+from app.core.config import Config
 
 appInfo = {
     "image": b"WhatsApp Image Keys",

@@ -1,5 +1,5 @@
 from redis import Redis
-from config import Config
+from app.core.config import Config
 import logging
 import json
 from typing import Any

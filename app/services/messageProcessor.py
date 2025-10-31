@@ -1,12 +1,11 @@
 import logging
 from typing import Any, Literal
-from database import redis_queue, mongo_db
-from whatsappMessage import WhatsappMessage
-from openaiIntegration import clientAI
-from evolutionIntegration import clientEvolution
-from message import Message
-from contentItem import ContentItem
-from decrypt import decryptByLink
+from app.integrations.decrypt import decryptByLink
+from app.models.contentItem import ContentItem
+from app.models.message import Message
+from app.models.whatsappMessage import WhatsappMessage
+from app.database import db_current, redis_queue
+from app.integrations import clientAI, clientEvolution
 import base64
 import os
 
@@ -58,12 +57,10 @@ class MessageProcessor:
             self.message = Message(role="user", content=all_content_items)
 
             # Salva no MongoDB APENAS com dados criptografados
-            mongo_db.save(
+            db_current.save(
                 phone_number=phone_number,
                 message_data=self.message.model_dump(exclude_none=True, mode="json"),
             )
-
-            logger.info(f"Mensagem salva no MongoDB para {phone_number}")
 
             # Processa o lote completo com OpenAI (aqui sim descriptografa)
             await self._process_with_openai(phone_number)
@@ -139,6 +136,18 @@ class MessageProcessor:
             if caption and caption.strip():
                 content_items.append(ContentItem(type="input_text", text=caption))
                 logger.info(f"Caption processada: {caption[:50]}...")
+            if not caption and type in ("imageMessage", "documentMessage"):
+                content_items.append(
+                    ContentItem(
+                        type="input_text",
+                        text=(
+                            "Analise esta imagem"
+                            if type == "imageMessage"
+                            else "Analise este documento"
+                        ),
+                    )
+                )
+                logger.info(f"Caption padrão gerado")
 
             # Adiciona o item de mídia com dados CRIPTOGRAFADOS
             content_items.append(
@@ -147,7 +156,6 @@ class MessageProcessor:
                     url=encrypted_url,  # URL criptografada
                     media_key=media_key_b64,  # Chave para descriptografar depois
                     mimetype=mimetype,
-                    # NÃO inclui public_url aqui - será gerada apenas para OpenAI
                 )
             )
             logger.info(f"Mídia {content_type} salva com dados criptografados")
@@ -162,7 +170,7 @@ class MessageProcessor:
         """Processa o histórico completo com a OpenAI (descriptografa apenas aqui)"""
         try:
             # Carrega histórico completo do MongoDB
-            historical_messages: list[dict[str, Any]] = mongo_db.get_history(
+            historical_messages: list[dict[str, Any]] = db_current.get_history(
                 phone_number, limit=50
             )
 
@@ -198,7 +206,7 @@ class MessageProcessor:
             clientEvolution.send_message(self.zap_message)
 
             # Salva a resposta da assistant no MongoDB (apenas texto)
-            mongo_db.save(
+            db_current.save(
                 phone_number,
                 self.zap_message.message.model_dump(exclude_none=True, mode="json"),
             )
@@ -279,12 +287,15 @@ class MessageProcessor:
                 text_of_audio = clientAI.transcribe_audio(file_path)
                 openai_item = {"type": "input_text", "text": text_of_audio}
             else:
-                print(media_item["type"])
                 openai_item: dict[str, Any] = {
                     "type": media_item["type"],
-                    "url": public_url,
-                    "mimetype": media_item.get("mimetype"),
+                    (
+                        "image_url"
+                        if media_item["type"] == "input_image"
+                        else "file_url"
+                    ): public_url,
                 }
+
             return openai_item
 
         except Exception as e:

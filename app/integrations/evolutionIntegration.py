@@ -1,9 +1,10 @@
 from requests import Response
 import requests
-from config import Config
 from urllib.parse import quote as format_url
-from whatsappMessage import WhatsappMessage
 from logging import Logger, getLogger
+
+from app.core.config import Config
+from app.models.whatsappMessage import WhatsappMessage
 
 logger: Logger = getLogger(__name__)
 
@@ -41,6 +42,3 @@ class EvolutionIntegration:
             logger.info(
                 f"Mensagem enviada com sucesso para {whatsappMessage.to_number}"
             )
-
-# Instâncias globais
-clientEvolution: EvolutionIntegration = EvolutionIntegration()
