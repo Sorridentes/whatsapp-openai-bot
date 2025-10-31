@@ -24,8 +24,6 @@ Whatsapp -> Evolution API -> Webhook Flask -> Redis Queue -> Batch Processor -> 
 
 ## 📋 Pré-requisitos
 
-## 📋 Pré-requisitos
-
 - Python 3.8+
 - Docker e Docker Compose
 - Conta na [Evolution API](https://evolution-api.com/)
@@ -116,7 +114,8 @@ Use a URL do Ngrok (ex: https://abcd-1234.ngrok.io) para configurar o webhook:
 - **Descrição**: Webhook para receber mensagens do WhatsApp
 - **Payload**: JSON com dados da mensagem Evolution API
 - **Respostas**:
-  - 200: Mensagem processada com sucesso
+  - 200: Mensagem foi saltada
+  - 202: Mensagem foi enfilerada
   - 400: Requisição vazia
   - 403: Número não autorizado
   - 500: Erro interno do servidor
@@ -163,12 +162,7 @@ A aplicação gera logs detalhados para:
 - Verifique a configuração da Evolution API
 - Confirme se a instância está ativa
 
-Nota: Lembre-se de nunca commitar chaves de API ou informações sensíveis no repositório! Use sempre variáveis de ambiente.
-
 ## ⚠️ Avisos Importantes
-- Nunca comite chaves de API no repositório
-- Use sempre variáveis de ambiente para configurações sensíveis
-- Mantenha o arquivo .env no .gitignore
 - Configure corretamente as permissões de números autorizados
 
 ## 📞 Suporte
